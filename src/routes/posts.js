@@ -1,9 +1,24 @@
 import { Router } from 'express'
-import { db } from '../db.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { db, uploadsDir } from '../db.js'
 import { emptyEditorContent, normalizeEditorType } from '../editors.js'
 import { keywordsByPostIds, listKeywords, normalizeKeywords, replacePostKeywords } from '../keywords.js'
+import {
+  attachmentsByPostIds,
+  deletePostUploadFiles,
+  normalizeAttachments,
+  replacePostAttachments
+} from '../attachments.js'
 import { requireAuth, requireWriter } from '../middleware/auth.js'
-import { applyHomepageFlag, getHomePostId, setHomePostId } from '../settings.js'
+import {
+  applyHomepageFlag,
+  getHomePostIds,
+  getHomepageSortMap,
+  removeHomepagePost,
+  setHomepageOrder
+} from '../homepage.js'
+import { categoryRequiresLogin, loginRequiredCategoryIds } from './categories.js'
 
 const router = Router()
 
@@ -24,7 +39,19 @@ function visibilityFilter(user) {
       params: [user.id, user.id]
     }
   }
-  return { sql: "posts.deleted_at IS NULL AND posts.status = 'published' AND posts.visibility = 'public'", params: [] }
+
+  const privateCats = loginRequiredCategoryIds()
+  if (!privateCats.length) {
+    return {
+      sql: "posts.deleted_at IS NULL AND posts.status = 'published' AND posts.visibility = 'public'",
+      params: []
+    }
+  }
+  return {
+    sql: `posts.deleted_at IS NULL AND posts.status = 'published' AND posts.visibility = 'public'
+      AND (posts.category_id IS NULL OR posts.category_id NOT IN (${privateCats.map(() => '?').join(',')}))`,
+    params: [...privateCats]
+  }
 }
 
 function descendantIds(categoryId) {
@@ -45,7 +72,7 @@ function descendantIds(categoryId) {
   return ids
 }
 
-function mapPost(row, { includeContent = false, keywords = [], isHomepage = false } = {}) {
+function mapPost(row, { includeContent = false, keywords = [], isHomepage = false, homepageSort = null } = {}) {
   if (!row) return null
   const post = {
     id: row.id,
@@ -60,6 +87,7 @@ function mapPost(row, { includeContent = false, keywords = [], isHomepage = fals
     editorType: row.editor_type,
     keywords,
     isHomepage,
+    homepageSort,
     deletedAt: row.deleted_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -70,17 +98,40 @@ function mapPost(row, { includeContent = false, keywords = [], isHomepage = fals
 
 function withKeywords(rows, options = {}) {
   const map = keywordsByPostIds(db, rows.map((row) => row.id))
-  const homePostId = getHomePostId()
-  return rows.map((row) => mapPost(row, {
-    ...options,
-    keywords: map.get(row.id) || [],
-    isHomepage: row.id === homePostId
-  }))
+  const files = options.includeContent ? attachmentsByPostIds(db, rows.map((row) => row.id)) : null
+  const homeSort = getHomepageSortMap()
+  return rows.map((row) => {
+    const sort = homeSort.has(row.id) ? homeSort.get(row.id) : null
+    const post = mapPost(row, {
+      ...options,
+      keywords: map.get(row.id) || [],
+      isHomepage: sort != null,
+      homepageSort: sort
+    })
+    if (files) post.attachments = files.get(row.id) || []
+    return post
+  })
 }
 
 function parseHomepageFlag(body) {
   if (!body || !('isHomepage' in body)) return null
   return body.isHomepage === true || body.isHomepage === 'true' || body.isHomepage === 1 || body.isHomepage === '1'
+}
+
+function parseHomepageSort(body) {
+  if (!body || !('homepageSort' in body)) return null
+  const n = Math.round(Number(body.homepageSort))
+  if (!Number.isFinite(n)) return null
+  return Math.max(0, Math.min(9999, n))
+}
+
+function canReadPost(row, user) {
+  if (!row || row.deleted_at) return false
+  const isOwner = user?.id === row.author_id
+  if (row.status === 'draft' && !isOwner) return false
+  if (row.visibility === 'private' && !isOwner) return false
+  if (!user && categoryRequiresLogin(row.category_id)) return false
+  return true
 }
 
 const LIST_SELECT = `
@@ -206,6 +257,29 @@ router.get('/keywords', (req, res) => {
   res.json({ keywords: listKeywords(db, req.query.q) })
 })
 
+router.get('/homepage', (req, res) => {
+  const ids = getHomePostIds()
+  if (!ids.length) {
+    return res.json({ posts: [] })
+  }
+  const rows = db.prepare(`
+    ${LIST_SELECT.replace('posts.updated_at', 'posts.updated_at, posts.content')}
+    WHERE posts.id IN (${ids.map(() => '?').join(',')})
+  `).all(...ids)
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  const ordered = ids.map((id) => byId.get(id)).filter(Boolean).filter((row) => canReadPost(row, req.user))
+  res.json({ posts: withKeywords(ordered, { includeContent: true }) })
+})
+
+router.put('/homepage/order', requireWriter, (req, res) => {
+  try {
+    const ids = setHomepageOrder(req.body?.postIds || req.body?.homePostIds || [])
+    res.json({ homePostIds: ids, hasHomepage: ids.length > 0 })
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message })
+  }
+})
+
 router.get('/trash', requireAuth, (req, res) => {
   const rows = db.prepare(`
     ${LIST_SELECT}
@@ -233,8 +307,10 @@ router.delete('/:id/permanent', requireWriter, (req, res) => {
   if (!existing || !existing.deleted_at) {
     return res.status(404).json({ error: '휴지통에서 글을 찾을 수 없습니다.' })
   }
-  db.prepare('DELETE FROM posts WHERE id = ?').run(existing.id)
-  if (getHomePostId() === existing.id) setHomePostId(null)
+  db.transaction(() => {
+    deletePostUploadFiles(db, existing)
+    db.prepare('DELETE FROM posts WHERE id = ?').run(existing.id)
+  })()
   res.json({ ok: true })
 })
 
@@ -244,18 +320,29 @@ router.get('/:id', (req, res) => {
     WHERE posts.id = ?
   `).get(req.params.id)
 
-  if (!row || row.deleted_at) {
-    return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
-  }
-  const isOwner = req.user?.id === row.author_id
-  if (row.status === 'draft' && !isOwner) {
-    return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
-  }
-  if (row.visibility === 'private' && !isOwner) {
+  if (!canReadPost(row, req.user)) {
     return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
   }
 
   res.json({ post: withKeywords([row], { includeContent: true })[0] })
+})
+
+router.get('/:id/attachments/:attachmentId', (req, res) => {
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id)
+  if (!canReadPost(post, req.user)) {
+    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+  }
+  const row = db.prepare(`
+    SELECT * FROM post_attachments WHERE id = ? AND post_id = ?
+  `).get(req.params.attachmentId, req.params.id)
+  if (!row) {
+    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+  }
+  const filePath = path.join(uploadsDir, path.basename(row.stored_name))
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+  }
+  res.download(filePath, row.original_name)
 })
 
 router.post('/', requireWriter, (req, res) => {
@@ -275,6 +362,7 @@ router.post('/', requireWriter, (req, res) => {
   }
 
   const keywords = normalizeKeywords(req.body?.keywords)
+  const attachments = normalizeAttachments(req.body?.attachments)
   const slug = slugify(title)
   const result = db.transaction(() => {
     const inserted = db.prepare(`
@@ -282,8 +370,9 @@ router.post('/', requireWriter, (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(title, slug, categoryId, req.user.id, visibility, status, editorType, content)
     replacePostKeywords(db, inserted.lastInsertRowid, keywords)
+    replacePostAttachments(db, inserted.lastInsertRowid, attachments)
     const homepage = parseHomepageFlag(req.body)
-    if (homepage != null) applyHomepageFlag(inserted.lastInsertRowid, homepage)
+    if (homepage != null) applyHomepageFlag(inserted.lastInsertRowid, homepage, parseHomepageSort(req.body))
     return inserted.lastInsertRowid
   })()
 
@@ -329,6 +418,9 @@ router.patch('/:id', requireWriter, (req, res) => {
   const keywords = 'keywords' in (req.body || {})
     ? normalizeKeywords(req.body.keywords)
     : null
+  const attachments = 'attachments' in (req.body || {})
+    ? normalizeAttachments(req.body.attachments)
+    : null
 
   db.transaction(() => {
     db.prepare(`
@@ -338,8 +430,13 @@ router.patch('/:id', requireWriter, (req, res) => {
       WHERE id = ?
     `).run(title, slug, categoryId, visibility, status, editorType, content, existing.id)
     if (keywords) replacePostKeywords(db, existing.id, keywords)
+    if (attachments) replacePostAttachments(db, existing.id, attachments)
     const homepage = parseHomepageFlag(req.body)
-    if (homepage != null) applyHomepageFlag(existing.id, homepage)
+    if (homepage != null) applyHomepageFlag(existing.id, homepage, parseHomepageSort(req.body))
+    else if ('homepageSort' in (req.body || {})) {
+      const sort = getHomepageSortMap().get(existing.id)
+      if (sort != null) applyHomepageFlag(existing.id, true, parseHomepageSort(req.body))
+    }
   })()
 
   const row = db.prepare(`
@@ -355,7 +452,10 @@ router.delete('/:id', requireWriter, (req, res) => {
   if (!existing || existing.deleted_at) {
     return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
   }
-  db.prepare("UPDATE posts SET deleted_at = datetime('now') WHERE id = ?").run(existing.id)
+  db.transaction(() => {
+    db.prepare("UPDATE posts SET deleted_at = datetime('now') WHERE id = ?").run(existing.id)
+    removeHomepagePost(existing.id)
+  })()
   res.json({ ok: true, trashed: true })
 })
 

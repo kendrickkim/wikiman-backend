@@ -7,6 +7,13 @@ node_modules/
 data/wiki.db
 data/wiki.db-wal
 data/wiki.db-shm
+data/wiki.db.prerestore
+data/tmp-uploads/
+data/tmp-backup-*
+data/.tmp-uploads/
+data/.tmp-backup-*
+data/.backup-*
+data/test-backup*
 data/uploads/*
 !data/uploads/.gitkeep
 public/*

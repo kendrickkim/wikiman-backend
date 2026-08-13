@@ -10,6 +10,7 @@ import postRoutes from './routes/posts.js'
 import uploadRoutes from './routes/uploads.js'
 import plantumlRoutes from './routes/plantuml.js'
 import settingsRoutes from './routes/settings.js'
+import backupRoutes from './routes/backup.js'
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
@@ -25,6 +26,7 @@ app.use('/api/uploads', uploadRoutes)
 app.use('/api/files', express.static(uploadsDir))
 app.use('/api/plantuml', plantumlRoutes)
 app.use('/api/settings', settingsRoutes)
+app.use('/api/backup', backupRoutes)
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
@@ -49,3 +51,4 @@ app.listen(port, () => {
     console.log('Frontend build not found. Copy frontend dist/spa into public/')
   }
 })
+

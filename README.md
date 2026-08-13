@@ -20,14 +20,14 @@ npm run dev
 
 ## 프론트 호스팅
 
-프론트 저장소에서 빌드한 `dist/spa` 내용을 `public/` 에 복사하면 백엔드가 사이트까지 같이 서빙합니다.
+프론트 저장소에서 빌드한 `dist/pwa` 내용을 `public/` 에 복사하면 백엔드가 사이트까지 같이 서빙합니다.
 
 ```bash
 # 프론트 저장소
 npm run build
 
 # 이 저장소
-xcopy /E /I /Y ..\frontend\dist\spa public
+xcopy /E /I /Y ..\frontend\dist\pwa public
 npm start
 ```
 
