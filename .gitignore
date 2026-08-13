@@ -1,0 +1,13 @@
+node_modules/
+.env
+*.log
+.DS_Store
+.idea/
+.vscode/
+data/wiki.db
+data/wiki.db-wal
+data/wiki.db-shm
+data/uploads/*
+!data/uploads/.gitkeep
+public/*
+!public/.gitkeep
