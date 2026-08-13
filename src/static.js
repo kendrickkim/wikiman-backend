@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
@@ -14,6 +15,41 @@ function resolveFrontendDir() {
   ].filter(Boolean)
 
   return candidates.find((dir) => fs.existsSync(path.join(dir, 'index.html'))) || null
+}
+
+function proxyToApi(apiPort) {
+  return (req, res) => {
+    const headers = { ...req.headers, host: `127.0.0.1:${apiPort}` }
+
+    const proxyReq = http.request({
+      hostname: '127.0.0.1',
+      port: apiPort,
+      path: req.originalUrl || req.url,
+      method: req.method,
+      headers
+    }, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
+      proxyRes.pipe(res)
+    })
+
+    proxyReq.on('error', (err) => {
+      console.error(err)
+      if (!res.headersSent) {
+        res.status(502).json({ error: 'API 서버에 연결할 수 없습니다.' })
+      } else {
+        res.end()
+      }
+    })
+
+    req.pipe(proxyReq)
+  }
+}
+
+/** 호스팅 전용 앱: /api 프록시 + 정적 파일 */
+export function createHostApp({ apiPort }) {
+  const hostApp = express()
+  hostApp.use('/api', proxyToApi(apiPort))
+  return hostApp
 }
 
 export function mountFrontend(app) {

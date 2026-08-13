@@ -2,7 +2,7 @@
 
 Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`).
 
-진입점: `src/index.js` (`loadEnv.js`를 먼저 import). 개발: `npm run dev` (`node --watch`). 포트 `3001`.
+진입점: `src/index.js` (`loadEnv.js`를 먼저 import). 개발: `npm run dev` (`node --watch`). API 포트 `85`, 호스팅 포트 `80`.
 
 ## 구조
 
