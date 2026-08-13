@@ -1,12 +1,16 @@
 import { Router } from 'express'
 import plantumlEncoder from 'plantuml-encoder'
+import { getSettings } from '../settings.js'
 
 const router = Router()
-const plantumlServer = (process.env.PLANTUML_SERVER || 'https://www.plantuml.com/plantuml').replace(/\/$/, '')
+
+function plantumlServer() {
+  return getSettings().plantumlServer || 'https://www.plantuml.com/plantuml'
+}
 
 async function renderSvg(source) {
   const encoded = plantumlEncoder.encode(source)
-  const url = `${plantumlServer}/svg/${encoded}`
+  const url = `${plantumlServer()}/svg/${encoded}`
   const response = await fetch(url)
   if (!response.ok) {
     throw new Error('PlantUML 렌더링에 실패했습니다.')
@@ -30,7 +34,7 @@ router.post('/', async (req, res) => {
 router.get('/:encoded', async (req, res) => {
   try {
     const encoded = req.params.encoded
-    const url = `${plantumlServer}/svg/${encoded}`
+    const url = `${plantumlServer()}/svg/${encoded}`
     const response = await fetch(url)
     if (!response.ok) {
       return res.status(502).json({ error: 'PlantUML 렌더링에 실패했습니다.' })

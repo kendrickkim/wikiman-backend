@@ -41,7 +41,7 @@ db.exec(`
     author_id INTEGER NOT NULL REFERENCES users(id),
     visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public', 'private')),
     status TEXT NOT NULL DEFAULT 'published' CHECK(status IN ('draft', 'published')),
-    editor_type TEXT NOT NULL DEFAULT 'editorjs' CHECK(editor_type IN ('editorjs', 'markdown')),
+    editor_type TEXT NOT NULL DEFAULT 'editorjs' CHECK(editor_type IN ('editorjs', 'markdown', 'html')),
     content TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -85,6 +85,104 @@ if (!userColumns.some((column) => column.name === 'role')) {
   if (firstUser) {
     db.prepare("UPDATE users SET role = 'writer' WHERE id = ?").run(firstUser.id)
   }
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+`)
+
+const seedSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
+seedSetting.run('site_title', 'Wikiman')
+seedSetting.run('theme', 'light')
+seedSetting.run(
+  'plantuml_server',
+  String(process.env.PLANTUML_SERVER || 'https://www.plantuml.com/plantuml').replace(/\/$/, '')
+)
+seedSetting.run('default_editor', 'editorjs')
+seedSetting.run('home_post_id', '')
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS post_keywords (
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    keyword TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (post_id, keyword)
+  );
+  CREATE INDEX IF NOT EXISTS idx_post_keywords_keyword ON post_keywords(keyword);
+`)
+
+const postsTableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'posts'").get()?.sql || ''
+if (postsTableSql && !postsTableSql.includes("'html'")) {
+  db.pragma('foreign_keys = OFF')
+  db.exec(`
+    DROP TRIGGER IF EXISTS posts_ai;
+    DROP TRIGGER IF EXISTS posts_ad;
+    DROP TRIGGER IF EXISTS posts_au;
+    DROP TABLE IF EXISTS posts_fts;
+
+    CREATE TABLE posts_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+      author_id INTEGER NOT NULL REFERENCES users(id),
+      visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public', 'private')),
+      status TEXT NOT NULL DEFAULT 'published' CHECK(status IN ('draft', 'published')),
+      editor_type TEXT NOT NULL DEFAULT 'editorjs' CHECK(editor_type IN ('editorjs', 'markdown', 'html')),
+      content TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    INSERT INTO posts_new (
+      id, title, slug, category_id, author_id, visibility, status, editor_type, content, created_at, updated_at
+    )
+    SELECT
+      id, title, slug, category_id, author_id, visibility,
+      COALESCE(status, 'published'),
+      editor_type, content, created_at, updated_at
+    FROM posts;
+
+    DROP TABLE posts;
+    ALTER TABLE posts_new RENAME TO posts;
+
+    CREATE VIRTUAL TABLE posts_fts USING fts5(
+      title,
+      content,
+      content='posts',
+      content_rowid='id',
+      tokenize = 'unicode61'
+    );
+
+    INSERT INTO posts_fts(rowid, title, content)
+    SELECT id, title, content FROM posts;
+
+    CREATE TRIGGER posts_ai AFTER INSERT ON posts BEGIN
+      INSERT INTO posts_fts(rowid, title, content)
+      VALUES (new.id, new.title, new.content);
+    END;
+
+    CREATE TRIGGER posts_ad AFTER DELETE ON posts BEGIN
+      INSERT INTO posts_fts(posts_fts, rowid, title, content)
+      VALUES ('delete', old.id, old.title, old.content);
+    END;
+
+    CREATE TRIGGER posts_au AFTER UPDATE ON posts BEGIN
+      INSERT INTO posts_fts(posts_fts, rowid, title, content)
+      VALUES ('delete', old.id, old.title, old.content);
+      INSERT INTO posts_fts(rowid, title, content)
+      VALUES (new.id, new.title, new.content);
+    END;
+  `)
+  db.pragma('foreign_keys = ON')
+}
+
+const latestPostColumns = db.prepare("PRAGMA table_info(posts)").all()
+if (!latestPostColumns.some((column) => column.name === 'deleted_at')) {
+  db.exec('ALTER TABLE posts ADD COLUMN deleted_at TEXT')
 }
 
 export { db, dataDir, uploadsDir, dbPath }

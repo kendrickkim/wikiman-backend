@@ -46,7 +46,7 @@ SQLite와 업로드 이미지는 `data/` 에 있습니다. 서버를 옮길 때 
 | --- | --- | --- |
 | `PORT` | `3001` | 서버 포트 |
 | `JWT_SECRET` | (개발용 기본값) | JWT 서명 키. 배포 시 반드시 변경 |
-| `PLANTUML_SERVER` | `https://www.plantuml.com/plantuml` | PlantUML 렌더 서버 |
+| `PLANTUML_SERVER` | `https://www.plantuml.com/plantuml` | PlantUML 렌더 서버 초기값. 이후에는 사이트 관리에서 변경 |
 | `ALLOW_REGISTER` | `true` | 회원가입 허용. 작성자가 생기면 이후 가입은 닫힘 |
 | `FRONTEND_DIST` | `public` | 프론트 빌드 폴더 |
 
