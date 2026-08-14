@@ -302,7 +302,7 @@ router.get('/', (req, res) => {
 router.get('/keywords', (req, res) => {
   const { sql, params } = visibilityFilter(req.user)
   const q = String(req.query.q || '').trim().replace(/[%_]/g, '')
-  const where = [sql]
+  const where = ['posts.deleted_at IS NULL', sql]
   const queryParams = [...params]
   if (q) {
     where.push('pk.keyword LIKE ?')
@@ -355,6 +355,21 @@ router.get('/trash', requireWriter, (req, res) => {
     ORDER BY posts.deleted_at DESC, posts.id DESC
   `).all()
   res.json({ posts: withKeywords(rows) })
+})
+
+router.delete('/trash', requireWriter, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, content FROM posts WHERE deleted_at IS NOT NULL
+  `).all()
+  let pendingUnlink = []
+  db.transaction(() => {
+    for (const row of rows) {
+      pendingUnlink.push(...deletePostUploadFiles(db, row))
+      db.prepare('DELETE FROM posts WHERE id = ?').run(row.id)
+    }
+  })()
+  unlinkStoredNames([...new Set(pendingUnlink)])
+  res.json({ ok: true, deleted: rows.length })
 })
 
 router.post('/:id/restore', requireWriter, (req, res) => {

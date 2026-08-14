@@ -83,7 +83,17 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.equal(Array.isArray(keywords.keywords), true)
   assert.equal(typeof keywords.keywords[0], 'object')
   assert.equal(keywords.keywords[0].name, '키워드A')
+  assert.equal(keywords.keywords[0].count, 1)
   assert.equal('keywordItems' in keywords, false)
+
+  db.prepare("UPDATE posts SET deleted_at = datetime('now') WHERE id = ?").run(postId)
+  const keywordsAfterTrash = await json(await fetch(`${base}/api/posts/keywords`))
+  assert.equal(
+    keywordsAfterTrash.keywords.some((item) => item.name === '키워드A'),
+    false,
+    '휴지통 글의 키워드는 문서 수에 포함되지 않아야 한다'
+  )
+  db.prepare('UPDATE posts SET deleted_at = NULL WHERE id = ?').run(postId)
 
   const htmlPost = await json(await fetch(`${base}/api/posts/${htmlId}`))
   assert.equal(htmlPost.post.content.includes('<script'), false)
