@@ -212,7 +212,7 @@ function searchClauses(q) {
         WHEN posts.title LIKE ? THEN 2
         ELSE 3
       END,
-      posts.updated_at DESC, posts.id DESC
+      posts.created_at DESC, posts.id DESC
   `
   return {
     like,
@@ -261,7 +261,7 @@ router.get('/', (req, res) => {
   }
 
   const q = String(req.query.q || '').trim()
-  let orderSql = 'ORDER BY posts.updated_at DESC, posts.id DESC'
+  let orderSql = 'ORDER BY posts.created_at DESC, posts.id DESC'
   let orderParams = []
   const baseWhere = [...where]
   const baseParams = [...queryParams]
