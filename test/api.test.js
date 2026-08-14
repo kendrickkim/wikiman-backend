@@ -158,6 +158,12 @@ test('비공개 글 파일은 직접 URL로 열 수 없고, 백업 복구는 스
   const deniedPost = await fetch(`${base}/api/posts/${post.id}/files/${stored}`)
   assert.equal(deniedPost.status, 404)
 
+  // 편집 중 붙여넣은(아직 글에 연결되지 않은) 이미지는 미리보기가 되어야 한다
+  const draftStored = 'draft-paste.png'
+  fs.writeFileSync(path.join(dbModule.uploadsDir, draftStored), 'draft-bytes')
+  const draftVisible = await fetch(`${base}/api/files/${draftStored}`)
+  assert.equal(draftVisible.status, 200)
+
   const login = await json(await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

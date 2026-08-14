@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import path from 'node:path'
 import multer from 'multer'
 import { MAX_FILES_PER_REQUEST, deleteOrphanUploads, summarizeOrphanUploads } from '../attachments.js'
 import { db, uploadsDir } from '../db.js'

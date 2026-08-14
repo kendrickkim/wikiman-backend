@@ -64,7 +64,17 @@ export function canAccessStoredFile(storedName, user, { postId = null } = {}) {
     JOIN upload_refs ON upload_refs.post_id = posts.id
     WHERE upload_refs.stored_name = ?
   `).all(name)
-  return rows.some((row) => canReadPost(row, user))
+  if (rows.some((row) => canReadPost(row, user))) return true
+
+  // 아직 어떤 글에도 연결되지 않은 업로드는 편집 중 미리보기를 위해 열어 둡니다.
+  return isUnlinkedUpload(name)
+}
+
+function isUnlinkedUpload(storedName) {
+  const linked = db.prepare('SELECT 1 FROM upload_refs WHERE stored_name = ?').get(storedName)
+  if (linked) return false
+  const attached = db.prepare('SELECT 1 FROM post_attachments WHERE stored_name = ?').get(storedName)
+  return !attached
 }
 
 export function sendUploadFile(res, filePath, { downloadName, mimeType } = {}) {
