@@ -7,7 +7,9 @@ export const MAX_ATTACHMENTS = 50
 /** @deprecated 설정값 getMaxAttachmentBytes()를 사용하세요 */
 export const MAX_FILE_SIZE = 20 * 1024 * 1024
 
-const FILE_URL_RE = /\/api\/files\/([^/?#"'\s<>\\]+)/g
+// Markdown URL의 닫는 괄호는 파일명에 포함하지 않습니다.
+// 예: ![이미지](/api/files/example.png)
+const FILE_URL_RE = /\/api\/files\/([^/?#"'\s<>\\)]+)/g
 
 export function mapAttachment(row) {
   return {
