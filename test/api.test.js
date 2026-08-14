@@ -37,6 +37,8 @@ test('schema_version이 정수로 저장된다', () => {
   assert.equal(Number(row.value), CURRENT_SCHEMA_VERSION)
   const refs = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'upload_refs'").get()
   assert.ok(refs)
+  const topMenu = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'top_menu_items'").get()
+  assert.ok(topMenu)
 })
 
 test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 API는 객체 배열만 반환한다', async (t) => {
@@ -69,6 +71,36 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   const session = await json(login)
   assert.ok(session.token)
   const auth = { authorization: `Bearer ${session.token}` }
+
+  const savedMenu = await json(await fetch(`${base}/api/settings/top-menu`, {
+    method: 'PUT',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      items: [
+        { label: '검색 문서', postId },
+        { label: '외부', url: 'https://example.com/docs' },
+        { label: '내부', url: '/keywords' }
+      ]
+    })
+  }))
+  assert.equal(savedMenu.items[0].label, '검색 문서')
+  assert.equal(savedMenu.items[0].postId, postId)
+  assert.equal(savedMenu.items[1].url, 'https://example.com/docs')
+  assert.equal(savedMenu.items[2].url, '/keywords')
+
+  const publicSettings = await json(await fetch(`${base}/api/settings`))
+  assert.deepEqual(
+    publicSettings.topMenuItems.map((item) => ({
+      label: item.label,
+      postId: item.postId,
+      url: item.url || ''
+    })),
+    [
+      { label: '검색 문서', postId, url: '' },
+      { label: '외부', postId: null, url: 'https://example.com/docs' },
+      { label: '내부', postId: null, url: '/keywords' }
+    ]
+  )
 
   const byTitle = await json(await fetch(`${base}/api/posts?q=${encodeURIComponent('검색제목')}`))
   assert.equal(byTitle.posts.some((post) => post.id === postId), true)

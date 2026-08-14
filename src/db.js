@@ -9,7 +9,7 @@ const dataDir = path.resolve(process.env.WIKIMAN_DATA_DIR || path.join(__dirname
 const uploadsDir = path.join(dataDir, 'uploads')
 const dbPath = path.join(dataDir, 'wiki.db')
 
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 4
 
 fs.mkdirSync(dataDir, { recursive: true })
 fs.mkdirSync(uploadsDir, { recursive: true })
@@ -200,6 +200,52 @@ function migrateTo(database, version) {
     migrateLegacyFileUrls(database)
     rebuildUploadRefs(database)
   }
+  if (version === 3) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS top_menu_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        label TEXT NOT NULL,
+        post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_top_menu_items_sort
+      ON top_menu_items(sort_order, id);
+    `)
+  }
+  if (version === 4) {
+    ensureTopMenuSchema(database)
+  }
+}
+
+/** url 컬럼·nullable post_id가 없으면 top_menu_items를 재구성합니다. */
+function ensureTopMenuSchema(database) {
+  const info = database.prepare('PRAGMA table_info(top_menu_items)').all()
+  if (!info.length) return
+  const names = info.map((row) => row.name)
+  const postId = info.find((row) => row.name === 'post_id')
+  const needsRebuild = !names.includes('url') || Boolean(postId?.notnull)
+  if (!needsRebuild) return
+
+  database.pragma('foreign_keys = OFF')
+  try {
+    database.exec(`
+      CREATE TABLE top_menu_items_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        label TEXT NOT NULL,
+        post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+        url TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO top_menu_items_new (id, label, post_id, url, sort_order)
+      SELECT id, label, post_id, NULL, sort_order FROM top_menu_items;
+      DROP TABLE top_menu_items;
+      ALTER TABLE top_menu_items_new RENAME TO top_menu_items;
+      CREATE INDEX IF NOT EXISTS idx_top_menu_items_sort
+      ON top_menu_items(sort_order, id);
+    `)
+  } finally {
+    database.pragma('foreign_keys = ON')
+  }
 }
 
 function ensureSchema(database) {
@@ -284,6 +330,7 @@ function ensureSchema(database) {
   seedSetting.run('category_tree_expand', 'expanded')
   seedSetting.run('category_tree_side', 'left')
   seedSetting.run('font_scale', '100')
+  seedSetting.run('top_menu_visible', '1')
 
   database.exec(`
   CREATE TABLE IF NOT EXISTS post_keywords (
@@ -309,6 +356,18 @@ function ensureSchema(database) {
   CREATE INDEX IF NOT EXISTS idx_post_attachments_post_id ON post_attachments(post_id);
 `)
 
+  database.exec(`
+  CREATE TABLE IF NOT EXISTS top_menu_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+    url TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_top_menu_items_sort
+  ON top_menu_items(sort_order, id);
+`)
+
   let version = getSchemaVersion(database)
   if (version < 1) {
     applyLegacyMigrations(database)
@@ -322,6 +381,9 @@ function ensureSchema(database) {
     version = next
     setSchemaVersion(database, version)
   }
+
+  // 버전만 올라가고 컬럼이 빠진 DB도 복구합니다.
+  ensureTopMenuSchema(database)
 }
 
 export function openDatabase() {

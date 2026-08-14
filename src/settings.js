@@ -2,6 +2,7 @@ import { db } from './db.js'
 import path from 'node:path'
 import { normalizeEditorType } from './editors.js'
 import { getHomePostIds } from './homepage.js'
+import { getTopMenuItems } from './topMenu.js'
 
 const DEFAULT_PLANTUML = 'https://www.plantuml.com/plantuml'
 const DEFAULT_MAX_ATTACHMENT_MB = 20
@@ -63,6 +64,15 @@ export function normalizeFontScale(value, fallback = DEFAULT_FONT_SCALE) {
   return n
 }
 
+export function normalizeTopMenuVisible(value, fallback = true) {
+  if (value === true || value === false) return value
+  const v = String(value ?? '').trim().toLowerCase()
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false
+  if (fallback === null) return null
+  return fallback
+}
+
 function rowMap() {
   const map = {
     site_title: 'Wikiman',
@@ -73,7 +83,8 @@ function rowMap() {
     max_attachment_mb: String(DEFAULT_MAX_ATTACHMENT_MB),
     category_tree_expand: 'expanded',
     category_tree_side: 'left',
-    font_scale: '100'
+    font_scale: '100',
+    top_menu_visible: '1'
   }
   for (const row of db.prepare('SELECT key, value FROM settings').all()) {
     map[row.key] = row.value
@@ -89,7 +100,7 @@ export function getMaxAttachmentBytes() {
   return getMaxAttachmentMb() * 1024 * 1024
 }
 
-export function getSettings() {
+export function getSettings(user) {
   const map = rowMap()
   const homePostIds = getHomePostIds()
   return {
@@ -102,8 +113,10 @@ export function getSettings() {
     categoryTreeExpand: normalizeCategoryTreeExpand(map.category_tree_expand, 'expanded'),
     categoryTreeSide: normalizeCategoryTreeSide(map.category_tree_side, 'left'),
     fontScale: normalizeFontScale(map.font_scale, 100),
+    topMenuVisible: normalizeTopMenuVisible(map.top_menu_visible, true),
     homePostIds,
-    hasHomepage: homePostIds.length > 0
+    hasHomepage: homePostIds.length > 0,
+    topMenuItems: getTopMenuItems(user)
   }
 }
 
@@ -114,7 +127,7 @@ function upsert(key, value) {
   `).run(key, value)
 }
 
-export function updateSettings(input = {}) {
+export function updateSettings(input = {}, user) {
   const current = getSettings()
   const next = { ...current }
 
@@ -187,6 +200,14 @@ export function updateSettings(input = {}) {
     next.fontScale = scale
   }
 
+  if (input.topMenuVisible != null) {
+    const visible = normalizeTopMenuVisible(input.topMenuVisible, null)
+    if (visible == null) {
+      throw Object.assign(new Error('상단 메뉴 표시 여부는 보이기 또는 숨기기만 선택할 수 있습니다.'), { status: 400 })
+    }
+    next.topMenuVisible = visible
+  }
+
   const tx = db.transaction(() => {
     upsert('site_title', next.siteTitle)
     upsert('theme', next.theme)
@@ -197,7 +218,8 @@ export function updateSettings(input = {}) {
     upsert('category_tree_expand', next.categoryTreeExpand)
     upsert('category_tree_side', next.categoryTreeSide)
     upsert('font_scale', String(next.fontScale))
+    upsert('top_menu_visible', next.topMenuVisible ? '1' : '0')
   })
   tx()
-  return getSettings()
+  return getSettings(user)
 }
