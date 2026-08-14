@@ -4,6 +4,41 @@ import { jwtSecret } from '../jwt.js'
 
 export { jwtSecret, assertJwtSecret } from '../jwt.js'
 
+const TOKEN_COOKIE = 'wikiman_token'
+
+function parseCookies(header) {
+  const out = {}
+  for (const part of String(header || '').split(';')) {
+    const idx = part.indexOf('=')
+    if (idx <= 0) continue
+    const key = part.slice(0, idx).trim()
+    const value = part.slice(idx + 1).trim()
+    if (!key) continue
+    try {
+      out[key] = decodeURIComponent(value)
+    } catch {
+      out[key] = value
+    }
+  }
+  return out
+}
+
+function tokenFromRequest(req) {
+  const header = req.headers.authorization
+  if (header?.startsWith('Bearer ')) return header.slice(7)
+  const cookies = parseCookies(req.headers.cookie)
+  return cookies[TOKEN_COOKIE] || ''
+}
+
+function userFromToken(token) {
+  if (!token) return null
+  try {
+    return jwt.verify(token, jwtSecret())
+  } catch {
+    return null
+  }
+}
+
 export function signToken(user) {
   const canWrite = user.canWrite === true || user.role === 'writer'
   return jwt.sign(
@@ -38,28 +73,21 @@ export function writerExists() {
 }
 
 export function optionalAuth(req, _res, next) {
-  const header = req.headers.authorization
-  if (header?.startsWith('Bearer ')) {
-    try {
-      req.user = jwt.verify(header.slice(7), jwtSecret())
-    } catch {
-      req.user = null
-    }
-  }
+  req.user = userFromToken(tokenFromRequest(req))
   next()
 }
 
 export function requireAuth(req, res, next) {
-  const header = req.headers.authorization
-  if (!header?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: '로그인이 필요합니다.' })
-  }
-  try {
-    req.user = jwt.verify(header.slice(7), jwtSecret())
-    next()
-  } catch {
+  const user = userFromToken(tokenFromRequest(req))
+  if (!user) {
+    const header = req.headers.authorization
+    if (!header?.startsWith('Bearer ') && !parseCookies(req.headers.cookie)[TOKEN_COOKIE]) {
+      return res.status(401).json({ error: '로그인이 필요합니다.' })
+    }
     return res.status(401).json({ error: '세션이 만료되었습니다. 다시 로그인하세요.' })
   }
+  req.user = user
+  next()
 }
 
 export function requireWriter(req, res, next) {

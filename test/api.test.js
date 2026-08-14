@@ -189,6 +189,12 @@ test('비공개 글 파일은 직접 URL로 열 수 없고, 백업 복구는 스
   assert.equal(allowed.status, 200)
   assert.equal(await allowed.text(), 'secret-bytes')
 
+  const allowedByCookie = await fetch(`${base}/api/posts/${post.id}/files/${stored}`, {
+    headers: { cookie: `wikiman_token=${encodeURIComponent(login.token)}` }
+  })
+  assert.equal(allowedByCookie.status, 200)
+  assert.equal(await allowedByCookie.text(), 'secret-bytes')
+
   const backupPath = path.join(dataDir, 'sample.wkmbak')
   await createBackupFile(backupPath)
   const info = await inspectBackupFile(backupPath)

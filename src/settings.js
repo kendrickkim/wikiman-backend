@@ -79,6 +79,7 @@ function rowMap() {
     theme: 'light',
     plantuml_server: DEFAULT_PLANTUML,
     default_editor: 'ckeditor',
+    default_editor_mobile: 'ckeditor',
     favicon: '',
     max_attachment_mb: String(DEFAULT_MAX_ATTACHMENT_MB),
     category_tree_expand: 'expanded',
@@ -108,6 +109,7 @@ export function getSettings(user) {
     theme: map.theme === 'dark' ? 'dark' : 'light',
     plantumlServer: String(map.plantuml_server || DEFAULT_PLANTUML).replace(/\/$/, ''),
     defaultEditor: normalizeEditorType(map.default_editor),
+    defaultEditorMobile: normalizeEditorType(map.default_editor_mobile || map.default_editor),
     favicon: normalizeFavicon(map.favicon, ''),
     maxAttachmentMb: normalizeMaxAttachmentMb(map.max_attachment_mb, DEFAULT_MAX_ATTACHMENT_MB),
     categoryTreeExpand: normalizeCategoryTreeExpand(map.category_tree_expand, 'expanded'),
@@ -157,7 +159,14 @@ export function updateSettings(input = {}, user) {
   if (input.defaultEditor != null) {
     next.defaultEditor = normalizeEditorType(input.defaultEditor, null)
     if (!next.defaultEditor) {
-      throw Object.assign(new Error('기본 작성 방식은 CKEditor, Editor.js, Markdown, HTML만 선택할 수 있습니다.'), { status: 400 })
+      throw Object.assign(new Error('데스크톱 기본 작성 방식을 올바르게 선택하세요.'), { status: 400 })
+    }
+  }
+
+  if (input.defaultEditorMobile != null) {
+    next.defaultEditorMobile = normalizeEditorType(input.defaultEditorMobile, null)
+    if (!next.defaultEditorMobile) {
+      throw Object.assign(new Error('모바일 기본 작성 방식을 올바르게 선택하세요.'), { status: 400 })
     }
   }
 
@@ -213,6 +222,7 @@ export function updateSettings(input = {}, user) {
     upsert('theme', next.theme)
     upsert('plantuml_server', next.plantumlServer)
     upsert('default_editor', next.defaultEditor)
+    upsert('default_editor_mobile', next.defaultEditorMobile)
     upsert('favicon', next.favicon)
     upsert('max_attachment_mb', String(next.maxAttachmentMb))
     upsert('category_tree_expand', next.categoryTreeExpand)
