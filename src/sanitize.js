@@ -106,7 +106,7 @@ function sanitizeEditorJsValue(value) {
 export function sanitizePostContent(editorType, content) {
   const type = String(editorType || '')
   const raw = content == null ? '' : String(content)
-  if (type === 'html' || type === 'ckeditor') return sanitizeHtml(raw)
+  if (type === 'html' || type === 'ckeditor' || type === 'summernote') return sanitizeHtml(raw)
   if (type === 'editorjs') {
     try {
       const parsed = JSON.parse(raw || '{"blocks":[]}')

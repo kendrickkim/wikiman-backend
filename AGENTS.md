@@ -30,7 +30,7 @@ Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`)
 - 삭제: `DELETE /posts/:id`는 soft delete. 복원 `POST /:id/restore`. 완전 삭제 `DELETE /:id/permanent`.
 - 완전 삭제 시 `post_attachments`와 본문(`/api/files/...`)에서 쓰인 업로드 파일을 함께 지웁니다. 다른 글·파비콘이 쓰는 파일은 남깁니다.
 - 홈페이지: `isHomepage`로 여러 글 지정. `homepage_posts`에 순서 저장. `GET /posts/homepage`, 순서 변경 `PUT /posts/homepage/order`. 휴지통으로내면 홈에서 제거.
-- 에디터: `ckeditor`(기본) | `editorjs` | `markdown` | `html`. 본문은 문자열.
+- 에디터: `ckeditor`(기본) | `summernote` | `editorjs` | `markdown` | `html`. 본문은 문자열.
 - 첨부 파일: 글당 여러 개. 파일당 최대 용량은 설정 `max_attachment_mb`(기본 20, 1~200). `post_attachments`. 업로드는 `POST /uploads/files`.
 - 파일 URL: 글에 묶인 파일은 `/api/posts/:id/files/:name`. 미저장 업로드·파비콘은 `/api/files/:name`. 둘 다 글 권한과 같은 접근 검사를 합니다. HTML/SVG는 다운로드 강제.
 - 첨부파일 정리: `GET /uploads/orphans`로 미연결 파일 검사, `POST /uploads/orphans/cleanup`으로 삭제. `upload_refs`·첨부·파비콘 기준.

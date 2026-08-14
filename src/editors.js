@@ -1,4 +1,4 @@
-export const EDITOR_TYPES = ['ckeditor', 'editorjs', 'markdown', 'html']
+export const EDITOR_TYPES = ['ckeditor', 'summernote', 'editorjs', 'markdown', 'html']
 
 export function normalizeEditorType(value, fallback = 'ckeditor') {
   return EDITOR_TYPES.includes(value) ? value : fallback

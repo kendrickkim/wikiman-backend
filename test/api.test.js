@@ -72,6 +72,20 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.ok(session.token)
   const auth = { authorization: `Bearer ${session.token}` }
 
+  const summernotePost = await json(await fetch(`${base}/api/posts`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: 'Summernote 글',
+      editorType: 'summernote',
+      content: '<p>Summernote</p><script>alert(1)</script>',
+      status: 'published',
+      visibility: 'public'
+    })
+  }))
+  assert.equal(summernotePost.post.editorType, 'summernote')
+  assert.equal(summernotePost.post.content.includes('<script'), false)
+
   const savedMenu = await json(await fetch(`${base}/api/settings/top-menu`, {
     method: 'PUT',
     headers: { ...auth, 'content-type': 'application/json' },

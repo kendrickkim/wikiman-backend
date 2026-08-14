@@ -9,7 +9,7 @@ const dataDir = path.resolve(process.env.WIKIMAN_DATA_DIR || path.join(__dirname
 const uploadsDir = path.join(dataDir, 'uploads')
 const dbPath = path.join(dataDir, 'wiki.db')
 
-export const CURRENT_SCHEMA_VERSION = 4
+export const CURRENT_SCHEMA_VERSION = 5
 
 fs.mkdirSync(dataDir, { recursive: true })
 fs.mkdirSync(uploadsDir, { recursive: true })
@@ -49,7 +49,7 @@ function recreatePostsTable(database, { withDeletedAt }) {
       author_id INTEGER NOT NULL REFERENCES users(id),
       visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public', 'private')),
       status TEXT NOT NULL DEFAULT 'published' CHECK(status IN ('draft', 'published')),
-      editor_type TEXT NOT NULL DEFAULT 'ckeditor' CHECK(editor_type IN ('ckeditor', 'editorjs', 'markdown', 'html')),
+      editor_type TEXT NOT NULL DEFAULT 'ckeditor' CHECK(editor_type IN ('ckeditor', 'summernote', 'editorjs', 'markdown', 'html')),
       content TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -215,6 +215,9 @@ function migrateTo(database, version) {
   if (version === 4) {
     ensureTopMenuSchema(database)
   }
+  if (version === 5) {
+    recreatePostsTable(database, { withDeletedAt: true })
+  }
 }
 
 /** url 컬럼·nullable post_id가 없으면 top_menu_items를 재구성합니다. */
@@ -276,7 +279,7 @@ function ensureSchema(database) {
     author_id INTEGER NOT NULL REFERENCES users(id),
     visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public', 'private')),
     status TEXT NOT NULL DEFAULT 'published' CHECK(status IN ('draft', 'published')),
-    editor_type TEXT NOT NULL DEFAULT 'ckeditor' CHECK(editor_type IN ('ckeditor', 'editorjs', 'markdown', 'html')),
+    editor_type TEXT NOT NULL DEFAULT 'ckeditor' CHECK(editor_type IN ('ckeditor', 'summernote', 'editorjs', 'markdown', 'html')),
     content TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
