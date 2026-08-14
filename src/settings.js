@@ -31,6 +31,29 @@ export function normalizeMaxAttachmentMb(value, fallback = DEFAULT_MAX_ATTACHMEN
   return n
 }
 
+const TREE_EXPAND_VALUES = ['expanded', 'collapsed', 'root']
+
+export function normalizeCategoryTreeExpand(value, fallback = 'expanded') {
+  const v = String(value ?? '').trim()
+  if (TREE_EXPAND_VALUES.includes(v)) return v
+  if (fallback === null) return null
+  return fallback
+}
+
+export const FONT_SCALES = [60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
+const MIN_FONT_SCALE = 60
+const MAX_FONT_SCALE = 120
+const DEFAULT_FONT_SCALE = 100
+
+export function normalizeFontScale(value, fallback = DEFAULT_FONT_SCALE) {
+  const n = Math.round(Number(value))
+  if (!Number.isFinite(n) || n < MIN_FONT_SCALE || n > MAX_FONT_SCALE) {
+    if (fallback === null) return null
+    return fallback
+  }
+  return n
+}
+
 function rowMap() {
   const map = {
     site_title: 'Wikiman',
@@ -38,7 +61,9 @@ function rowMap() {
     plantuml_server: DEFAULT_PLANTUML,
     default_editor: 'ckeditor',
     favicon: '',
-    max_attachment_mb: String(DEFAULT_MAX_ATTACHMENT_MB)
+    max_attachment_mb: String(DEFAULT_MAX_ATTACHMENT_MB),
+    category_tree_expand: 'expanded',
+    font_scale: '100'
   }
   for (const row of db.prepare('SELECT key, value FROM settings').all()) {
     map[row.key] = row.value
@@ -64,6 +89,8 @@ export function getSettings() {
     defaultEditor: normalizeEditorType(map.default_editor),
     favicon: normalizeFavicon(map.favicon, ''),
     maxAttachmentMb: normalizeMaxAttachmentMb(map.max_attachment_mb, DEFAULT_MAX_ATTACHMENT_MB),
+    categoryTreeExpand: normalizeCategoryTreeExpand(map.category_tree_expand, 'expanded'),
+    fontScale: normalizeFontScale(map.font_scale, 100),
     homePostIds,
     hasHomepage: hasHomepagePosts()
   }
@@ -125,6 +152,22 @@ export function updateSettings(input = {}) {
     next.maxAttachmentMb = mb
   }
 
+  if (input.categoryTreeExpand != null) {
+    const mode = normalizeCategoryTreeExpand(input.categoryTreeExpand, null)
+    if (!mode) {
+      throw Object.assign(new Error('카테고리 트리는 모두 펼침, 모두 접힘, 1단계만 펼침만 선택할 수 있습니다.'), { status: 400 })
+    }
+    next.categoryTreeExpand = mode
+  }
+
+  if (input.fontScale != null) {
+    const scale = normalizeFontScale(input.fontScale, null)
+    if (scale == null) {
+      throw Object.assign(new Error('글자 스케일은 60~120%로 입력하세요.'), { status: 400 })
+    }
+    next.fontScale = scale
+  }
+
   const tx = db.transaction(() => {
     upsert('site_title', next.siteTitle)
     upsert('theme', next.theme)
@@ -132,6 +175,8 @@ export function updateSettings(input = {}) {
     upsert('default_editor', next.defaultEditor)
     upsert('favicon', next.favicon)
     upsert('max_attachment_mb', String(next.maxAttachmentMb))
+    upsert('category_tree_expand', next.categoryTreeExpand)
+    upsert('font_scale', String(next.fontScale))
   })
   tx()
   return getSettings()

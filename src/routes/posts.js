@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { db, uploadsDir } from '../db.js'
 import { emptyEditorContent, normalizeEditorType } from '../editors.js'
-import { keywordsByPostIds, listKeywords, normalizeKeywords, replacePostKeywords } from '../keywords.js'
+import { keywordsByPostIds, normalizeKeywords, replacePostKeywords } from '../keywords.js'
 import {
   attachmentsByPostIds,
   deletePostUploadFiles,
@@ -145,10 +145,46 @@ const LIST_SELECT = `
   LEFT JOIN categories ON categories.id = posts.category_id
 `
 
+const PAGE_SIZES = [10, 20, 50, 100]
+const DEFAULT_PAGE_SIZE = 10
+
+function parsePaging(query) {
+  const sizeRaw = Number(query?.pageSize ?? query?.limit)
+  const pageSize = PAGE_SIZES.includes(sizeRaw) ? sizeRaw : DEFAULT_PAGE_SIZE
+  const pageRaw = Math.floor(Number(query?.page))
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1
+  return { page, pageSize }
+}
+
+function listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, paging) {
+  const countRow = db.prepare(`
+    SELECT COUNT(*) AS total
+    ${fromSql}
+    WHERE ${whereSql}
+  `).get(...queryParams)
+  const total = Number(countRow?.total) || 0
+  const pageCount = Math.max(1, Math.ceil(total / paging.pageSize) || 1)
+  const page = Math.min(paging.page, pageCount)
+  const offset = (page - 1) * paging.pageSize
+  const rows = db.prepare(`
+    ${LIST_SELECT}
+    WHERE ${whereSql}
+    ${orderSql}
+    LIMIT ? OFFSET ?
+  `).all(...queryParams, ...orderParams, paging.pageSize, offset)
+  return { rows, total, page, pageSize: paging.pageSize }
+}
+
 router.get('/', (req, res) => {
   const { sql, params } = visibilityFilter(req.user)
   const where = [sql]
   const queryParams = [...params]
+  const paging = parsePaging(req.query)
+  const fromSql = `
+    FROM posts
+    JOIN users ON users.id = posts.author_id
+    LEFT JOIN categories ON categories.id = posts.category_id
+  `
 
   const categoryId = req.query.categoryId ?? req.query.category_id
   if (categoryId === 'uncategorized' || categoryId === '0') {
@@ -165,9 +201,19 @@ router.get('/', (req, res) => {
     queryParams.push(status)
   }
 
+  const keyword = String(req.query.keyword || '').trim()
+  if (keyword) {
+    where.push(`EXISTS (
+      SELECT 1 FROM post_keywords pk
+      WHERE pk.post_id = posts.id AND lower(pk.keyword) = lower(?)
+    )`)
+    queryParams.push(keyword)
+  }
+
   const q = String(req.query.q || '').trim()
   const like = q ? `%${q.replace(/[%_]/g, '')}%` : ''
   let orderSql = 'ORDER BY posts.updated_at DESC, posts.id DESC'
+  let orderParams = []
   if (q) {
     const ftsQuery = q
       .replace(/['"]/g, ' ')
@@ -211,28 +257,24 @@ router.get('/', (req, res) => {
         END,
         posts.updated_at DESC, posts.id DESC
     `
+    orderParams = [q, like, like]
   }
 
-  let rows
+  const whereSql = where.join(' AND ')
+  let result
   try {
-    const orderParams = q ? [q, like, like] : []
-    rows = db.prepare(`
-      ${LIST_SELECT}
-      WHERE ${where.join(' AND ')}
-      ${orderSql}
-    `).all(...queryParams, ...orderParams)
+    result = listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, paging)
   } catch {
     const fallbackLike = `%${q.replace(/[%_]/g, '')}%`
     const vis = visibilityFilter(req.user)
-    rows = db.prepare(`
-      ${LIST_SELECT}
-      WHERE ${vis.sql} AND (
+    const fallbackWhere = `${vis.sql} AND (
         EXISTS (
           SELECT 1 FROM post_keywords pk
           WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
         )
         OR posts.title LIKE ? OR posts.content LIKE ?
-      )
+      )`
+    const fallbackOrder = `
       ORDER BY
         CASE
           WHEN EXISTS (
@@ -247,14 +289,51 @@ router.get('/', (req, res) => {
           ELSE 3
         END,
         posts.updated_at DESC, posts.id DESC
-    `).all(...vis.params, fallbackLike, fallbackLike, fallbackLike, q, fallbackLike, fallbackLike)
+    `
+    result = listFromSql(
+      fromSql,
+      fallbackWhere,
+      [...vis.params, fallbackLike, fallbackLike, fallbackLike],
+      fallbackOrder,
+      [q, fallbackLike, fallbackLike],
+      paging
+    )
   }
 
-  res.json({ posts: withKeywords(rows) })
+  res.json({
+    posts: withKeywords(result.rows),
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize
+  })
 })
 
 router.get('/keywords', (req, res) => {
-  res.json({ keywords: listKeywords(db, req.query.q) })
+  const { sql, params } = visibilityFilter(req.user)
+  const q = String(req.query.q || '').trim().replace(/[%_]/g, '')
+  const where = [sql]
+  const queryParams = [...params]
+  if (q) {
+    where.push('pk.keyword LIKE ?')
+    queryParams.push(`%${q}%`)
+  }
+  const rows = db.prepare(`
+    SELECT pk.keyword, COUNT(*) AS count
+    FROM post_keywords pk
+    JOIN posts ON posts.id = pk.post_id
+    WHERE ${where.join(' AND ')}
+    GROUP BY lower(pk.keyword)
+    ORDER BY count DESC, pk.keyword COLLATE NOCASE ASC
+    LIMIT 500
+  `).all(...queryParams)
+  const keywordItems = rows.map((row) => ({
+      name: row.keyword,
+      count: Number(row.count) || 0
+    }))
+  res.json({
+    keywords: keywordItems.map((item) => item.name),
+    keywordItems
+  })
 })
 
 router.get('/homepage', (req, res) => {

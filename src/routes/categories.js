@@ -74,6 +74,12 @@ export function loginRequiredCategoryIds(database = db) {
   return all.filter((row) => requires(row.id)).map((row) => row.id)
 }
 
+function parseParentId(value) {
+  if (value == null || value === '' || value === 0 || value === '0') return null
+  const id = Number(value)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
 function wouldCreateCycle(id, newParentId) {
   if (!newParentId) return false
   if (Number(newParentId) === Number(id)) return true
@@ -99,7 +105,7 @@ router.get('/', (req, res) => {
 
 router.post('/', requireWriter, (req, res) => {
   const name = String(req.body?.name || '').trim()
-  const parentId = req.body?.parentId ?? req.body?.parent_id ?? null
+  const parentId = parseParentId(req.body?.parentId ?? req.body?.parent_id)
   const visibility = normalizeVisibility(req.body?.visibility)
   if (!name) {
     return res.status(400).json({ error: '카테고리 이름을 입력하세요.' })
@@ -139,7 +145,7 @@ router.patch('/:id', requireWriter, (req, res) => {
 
   let parentId = existing.parent_id
   if ('parentId' in (req.body || {}) || 'parent_id' in (req.body || {})) {
-    parentId = req.body.parentId ?? req.body.parent_id ?? null
+    parentId = parseParentId(req.body.parentId ?? req.body.parent_id)
   }
 
   if (parentId != null) {
@@ -152,7 +158,14 @@ router.patch('/:id', requireWriter, (req, res) => {
     }
   }
 
-  const sortOrder = req.body?.sortOrder ?? req.body?.sort_order ?? existing.sort_order
+  const parentChanged = (existing.parent_id ?? null) !== (parentId ?? null)
+  let sortOrder = req.body?.sortOrder ?? req.body?.sort_order ?? existing.sort_order
+  if (parentChanged && req.body?.sortOrder == null && req.body?.sort_order == null) {
+    const maxOrder = db.prepare(
+      'SELECT COALESCE(MAX(sort_order), 0) AS max_order FROM categories WHERE parent_id IS ?'
+    ).get(parentId ?? null)
+    sortOrder = maxOrder.max_order + 1
+  }
   const visibility = 'visibility' in (req.body || {})
     ? normalizeVisibility(req.body.visibility)
     : normalizeVisibility(existing.visibility)

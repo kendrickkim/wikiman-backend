@@ -14,6 +14,7 @@ data/.tmp-uploads/
 data/.tmp-backup-*
 data/.backup-*
 data/test-backup*
+data/dokuwiki/
 data/uploads/*
 !data/uploads/.gitkeep
 public/*

@@ -110,6 +110,8 @@ function ensureSchema(database) {
   database.prepare("UPDATE settings SET value = 'ckeditor' WHERE key = 'default_editor' AND value = 'editorjs'").run()
   seedSetting.run('favicon', '')
   seedSetting.run('max_attachment_mb', '20')
+  seedSetting.run('category_tree_expand', 'expanded')
+  seedSetting.run('font_scale', '100')
 
   database.exec(`
   CREATE TABLE IF NOT EXISTS post_keywords (
