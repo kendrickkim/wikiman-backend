@@ -40,6 +40,15 @@ export function normalizeCategoryTreeExpand(value, fallback = 'expanded') {
   return fallback
 }
 
+const TREE_SIDE_VALUES = ['left', 'right']
+
+export function normalizeCategoryTreeSide(value, fallback = 'left') {
+  const v = String(value ?? '').trim()
+  if (TREE_SIDE_VALUES.includes(v)) return v
+  if (fallback === null) return null
+  return fallback
+}
+
 export const FONT_SCALES = [60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
 const MIN_FONT_SCALE = 60
 const MAX_FONT_SCALE = 120
@@ -63,6 +72,7 @@ function rowMap() {
     favicon: '',
     max_attachment_mb: String(DEFAULT_MAX_ATTACHMENT_MB),
     category_tree_expand: 'expanded',
+    category_tree_side: 'left',
     font_scale: '100'
   }
   for (const row of db.prepare('SELECT key, value FROM settings').all()) {
@@ -90,6 +100,7 @@ export function getSettings() {
     favicon: normalizeFavicon(map.favicon, ''),
     maxAttachmentMb: normalizeMaxAttachmentMb(map.max_attachment_mb, DEFAULT_MAX_ATTACHMENT_MB),
     categoryTreeExpand: normalizeCategoryTreeExpand(map.category_tree_expand, 'expanded'),
+    categoryTreeSide: normalizeCategoryTreeSide(map.category_tree_side, 'left'),
     fontScale: normalizeFontScale(map.font_scale, 100),
     homePostIds,
     hasHomepage: homePostIds.length > 0
@@ -160,6 +171,14 @@ export function updateSettings(input = {}) {
     next.categoryTreeExpand = mode
   }
 
+  if (input.categoryTreeSide != null) {
+    const side = normalizeCategoryTreeSide(input.categoryTreeSide, null)
+    if (!side) {
+      throw Object.assign(new Error('카테고리 트리 위치는 왼쪽 또는 오른쪽만 선택할 수 있습니다.'), { status: 400 })
+    }
+    next.categoryTreeSide = side
+  }
+
   if (input.fontScale != null) {
     const scale = normalizeFontScale(input.fontScale, null)
     if (scale == null) {
@@ -176,6 +195,7 @@ export function updateSettings(input = {}) {
     upsert('favicon', next.favicon)
     upsert('max_attachment_mb', String(next.maxAttachmentMb))
     upsert('category_tree_expand', next.categoryTreeExpand)
+    upsert('category_tree_side', next.categoryTreeSide)
     upsert('font_scale', String(next.fontScale))
   })
   tx()

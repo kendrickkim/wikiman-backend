@@ -282,6 +282,7 @@ function ensureSchema(database) {
   seedSetting.run('favicon', '')
   seedSetting.run('max_attachment_mb', '20')
   seedSetting.run('category_tree_expand', 'expanded')
+  seedSetting.run('category_tree_side', 'left')
   seedSetting.run('font_scale', '100')
 
   database.exec(`
