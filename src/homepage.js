@@ -1,28 +1,5 @@
 import { db } from './db.js'
 
-export function ensureHomepageTable(database = db) {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS homepage_posts (
-      post_id INTEGER PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-      sort_order INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE INDEX IF NOT EXISTS idx_homepage_posts_sort ON homepage_posts(sort_order);
-  `)
-
-  // 이전 단일 home_post_id 설정을 이전
-  const legacy = database.prepare("SELECT value FROM settings WHERE key = 'home_post_id'").get()
-  const legacyId = Number(String(legacy?.value || '').trim())
-  if (Number.isFinite(legacyId) && legacyId > 0) {
-    const post = database.prepare('SELECT id FROM posts WHERE id = ?').get(legacyId)
-    if (post) {
-      database.prepare(`
-        INSERT OR IGNORE INTO homepage_posts (post_id, sort_order) VALUES (?, 0)
-      `).run(legacyId)
-    }
-    database.prepare("DELETE FROM settings WHERE key = 'home_post_id'").run()
-  }
-}
-
 export function getHomePostIds(database = db) {
   return database.prepare(`
     SELECT homepage_posts.post_id AS id
@@ -34,7 +11,13 @@ export function getHomePostIds(database = db) {
 }
 
 export function hasHomepagePosts(database = db) {
-  return getHomePostIds(database).length > 0
+  return Boolean(database.prepare(`
+    SELECT 1
+    FROM homepage_posts
+    JOIN posts ON posts.id = homepage_posts.post_id
+    WHERE posts.deleted_at IS NULL
+    LIMIT 1
+  `).get())
 }
 
 export function getHomepageSortMap(database = db) {
@@ -92,12 +75,21 @@ export function setHomepageOrder(postIds) {
   for (const raw of postIds) {
     const id = Number(raw)
     if (!Number.isFinite(id) || id <= 0 || seen.has(id)) continue
-    const post = db.prepare('SELECT id FROM posts WHERE id = ? AND deleted_at IS NULL').get(id)
-    if (!post) {
-      throw Object.assign(new Error(`홈페이지 글을 찾을 수 없습니다: ${id}`), { status: 400 })
-    }
     seen.add(id)
     ids.push(id)
+  }
+
+  if (ids.length) {
+    const found = db.prepare(`
+      SELECT id FROM posts
+      WHERE deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})
+    `).all(...ids)
+    const foundSet = new Set(found.map((row) => row.id))
+    for (const id of ids) {
+      if (!foundSet.has(id)) {
+        throw Object.assign(new Error(`홈페이지 글을 찾을 수 없습니다: ${id}`), { status: 400 })
+      }
+    }
   }
 
   const tx = db.transaction(() => {

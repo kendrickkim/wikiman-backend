@@ -5,6 +5,7 @@ import multer from 'multer'
 import { dataDir } from '../db.js'
 import { closeDatabase, reopenDatabase } from '../db.js'
 import { requireWriter } from '../middleware/auth.js'
+import { beginMaintenance, endMaintenance } from '../maintenance.js'
 import {
   BACKUP_EXTENSION,
   createBackupFile,
@@ -95,6 +96,7 @@ router.post('/restore', requireWriter, (req, res) => {
     try {
       // 복구 전 구조 재확인
       await inspectBackupFile(filePath)
+      beginMaintenance()
       closeDatabase()
       await new Promise((resolve) => setTimeout(resolve, 100))
       try {
@@ -111,6 +113,8 @@ router.post('/restore', requireWriter, (req, res) => {
           console.error(reopenErr)
         }
         throw restoreErr
+      } finally {
+        endMaintenance()
       }
     } catch (e) {
       res.status(e.status || 400).json({ error: e.message || '복구에 실패했습니다.' })

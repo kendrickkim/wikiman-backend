@@ -1,13 +1,18 @@
 import jwt from 'jsonwebtoken'
 import { db } from '../db.js'
+import { jwtSecret } from '../jwt.js'
 
-function jwtSecret() {
-  return process.env.JWT_SECRET || 'dev-secret-change-me'
-}
+export { jwtSecret, assertJwtSecret } from '../jwt.js'
 
 export function signToken(user) {
+  const canWrite = user.canWrite === true || user.role === 'writer'
   return jwt.sign(
-    { id: user.id, username: user.username },
+    {
+      id: user.id,
+      username: user.username,
+      role: canWrite ? 'writer' : 'reader',
+      canWrite
+    },
     jwtSecret(),
     { expiresIn: '7d' }
   )
@@ -59,9 +64,10 @@ export function requireAuth(req, res, next) {
 
 export function requireWriter(req, res, next) {
   requireAuth(req, res, () => {
-    if (!isWriter(req.user.id)) {
+    if (!isWriter(req.user.id) || req.user.canWrite === false) {
       return res.status(403).json({ error: '글 작성은 위키 작성자만 할 수 있습니다.' })
     }
+    req.user.canWrite = true
     next()
   })
 }

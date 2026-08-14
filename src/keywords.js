@@ -44,27 +44,3 @@ export function keywordsByPostIds(db, postIds) {
   }
   return map
 }
-
-export function listKeywords(db, q = '') {
-  const term = String(q || '').trim()
-  if (!term) {
-    return db.prepare(`
-      SELECT pk.keyword, COUNT(*) AS count
-      FROM post_keywords pk
-      JOIN posts ON posts.id = pk.post_id
-      WHERE posts.deleted_at IS NULL
-      GROUP BY pk.keyword
-      ORDER BY count DESC, pk.keyword COLLATE NOCASE ASC
-      LIMIT 100
-    `).all().map((row) => row.keyword)
-  }
-  return db.prepare(`
-    SELECT pk.keyword, COUNT(*) AS count
-    FROM post_keywords pk
-    JOIN posts ON posts.id = pk.post_id
-    WHERE posts.deleted_at IS NULL AND pk.keyword LIKE ?
-    GROUP BY pk.keyword
-    ORDER BY count DESC, pk.keyword COLLATE NOCASE ASC
-    LIMIT 20
-  `).all(`%${term.replace(/[%_]/g, '')}%`).map((row) => row.keyword)
-}

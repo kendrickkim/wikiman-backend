@@ -10,6 +10,7 @@ Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`)
 - `src/db.js` — 스키마·시드. WAL. 데이터는 `data/` (git 제외)
 - `src/middleware/auth.js` — JWT, `optionalAuth` / `requireAuth` / `requireWriter`
 - `src/settings.js` — `settings` 키/값. `favicon`은 사이트 아이콘. 홈페이지 글은 `homepage_posts` 테이블. 카테고리 트리 기본 펼침은 `category_tree_expand`(`expanded`|`collapsed`|`root`). 글자 스케일은 `font_scale`(60~120, 기본 100).
+- `src/db.js` — 스키마는 정수 `schema_version`(settings). 파일 참조는 `upload_refs`.
 
 에러 응답: `{ error: '한국어 메시지' }`. HTTP 상태 코드를 맞춥니다.
 
@@ -17,9 +18,10 @@ Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`)
 
 - 첫 가입 계정이 `role=writer`. 이후 가입은 닫힙니다.
 - 변경 API(글·카테고리·업로드·설정)는 `requireWriter`.
-- 목록/상세: 발행+공개 글은 누구나. 작성중·비공개 글은 작성자만. 비공개 카테고리(및 그 하위)의 글은 로그인한 사용자만. 휴지통(`deleted_at`) 글은 일반 조회에서 제외.
+- 목록/상세: 발행+공개 글은 누구나. 작성중·비공개 글은 작성자만. 비공개 카테고리(및 그 하위)의 글은 로그인한 사용자만. 휴지통(`deleted_at`) 글은 일반 조회에서 제외. 휴지통 API는 작성자만.
 - `GET /posts` 목록은 `page`(1부터), `pageSize`(10/20/50/100, 기본 10). 응답에 `total`, `page`, `pageSize`.
-- `GET /posts?keyword=`는 키워드 정확히 일치 필터. `GET /posts/keywords`는 현재 사용자가 볼 수 있는 글의 키워드와 건수를 반환.
+- `GET /posts?keyword=`는 키워드 정확히 일치 필터. `GET /posts/keywords`는 `{ keywords: [{ name, count }] }`.
+- 운영에서 `JWT_SECRET`이 없거나 `change-me` / `dev-secret-change-me`이면 기동을 거부합니다.
 
 ## 글
 
@@ -30,8 +32,9 @@ Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`)
 - 홈페이지: `isHomepage`로 여러 글 지정. `homepage_posts`에 순서 저장. `GET /posts/homepage`, 순서 변경 `PUT /posts/homepage/order`. 휴지통으로내면 홈에서 제거.
 - 에디터: `ckeditor`(기본) | `editorjs` | `markdown` | `html`. 본문은 문자열.
 - 첨부 파일: 글당 여러 개. 파일당 최대 용량은 설정 `max_attachment_mb`(기본 20, 1~200). `post_attachments`. 업로드는 `POST /uploads/files`.
-- 첨부파일 정리: `GET /uploads/orphans`로 미연결 파일 검사, `POST /uploads/orphans/cleanup`으로 삭제. 글 첨부·본문·파비콘에 쓰인 파일은 남깁니다.
-- 백업/복구: `.wkmbak` 커스텀 포맷(헤더 매직 `WIKIMNBK` + 형식 버전 + 스키마 메타 + gzip 본문). `GET /backup/download`, `POST /backup/inspect`, `POST /backup/restore`. 복구 전 헤더·버전·필수 테이블/컬럼·DB 무결성을 검사합니다.
+- 파일 URL: 글에 묶인 파일은 `/api/posts/:id/files/:name`. 미저장 업로드·파비콘은 `/api/files/:name`. 둘 다 글 권한과 같은 접근 검사를 합니다. HTML/SVG는 다운로드 강제.
+- 첨부파일 정리: `GET /uploads/orphans`로 미연결 파일 검사, `POST /uploads/orphans/cleanup`으로 삭제. `upload_refs`·첨부·파비콘 기준.
+- 백업/복구: `.wkmbak` 커스텀 포맷(헤더 매직 `WIKIMNBK` + 형식 버전 + 스키마 메타 + gzip 본문). `GET /backup/download`, `POST /backup/inspect`, `POST /backup/restore`. 복구는 스트리밍·원자 교체. 복구 전 헤더·버전·필수 테이블/컬럼·DB 무결성·외래 키를 검사합니다.
 - DokuWiki 가져오기: `npm run import:dokuwiki` (`scripts/import-dokuwiki.mjs`). 실행 시 경로·API·계정을 입력받음. 안내는 `document/dokuwiki-import.md`.
 
 ## 하지 말 것

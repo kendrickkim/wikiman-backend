@@ -28,13 +28,20 @@ function listCategories() {
   `).all().map(mapCategory)
 }
 
+function categoryRows(database = db) {
+  return database.prepare('SELECT id, parent_id, visibility FROM categories').all()
+}
+
 /** 카테고리 또는 상위 중 하나라도 비공개면 로그인 필요 */
 export function categoryRequiresLogin(categoryId, database = db) {
   if (categoryId == null || categoryId === '') return false
   let id = Number(categoryId)
   if (!Number.isFinite(id) || id <= 0) return false
-  while (id) {
-    const row = database.prepare('SELECT parent_id, visibility FROM categories WHERE id = ?').get(id)
+  const byId = new Map(categoryRows(database).map((row) => [row.id, row]))
+  const seen = new Set()
+  while (id && !seen.has(id)) {
+    seen.add(id)
+    const row = byId.get(id)
     if (!row) return false
     if (row.visibility === 'private') return true
     id = row.parent_id
@@ -43,7 +50,7 @@ export function categoryRequiresLogin(categoryId, database = db) {
 }
 
 export function loginRequiredCategoryIds(database = db) {
-  const all = database.prepare('SELECT id, parent_id, visibility FROM categories').all()
+  const all = categoryRows(database)
   const byId = new Map(all.map((row) => [row.id, row]))
   const cache = new Map()
   const requires = (id) => {
@@ -83,13 +90,14 @@ function parseParentId(value) {
 function wouldCreateCycle(id, newParentId) {
   if (!newParentId) return false
   if (Number(newParentId) === Number(id)) return true
-  let current = db.prepare('SELECT parent_id FROM categories WHERE id = ?').get(newParentId)
+  const byId = new Map(categoryRows().map((row) => [row.id, row]))
+  let current = byId.get(Number(newParentId))
   const seen = new Set([Number(id)])
   while (current) {
     if (seen.has(current.parent_id)) return true
     if (current.parent_id == null) return false
     seen.add(current.parent_id)
-    current = db.prepare('SELECT parent_id FROM categories WHERE id = ?').get(current.parent_id)
+    current = byId.get(current.parent_id)
   }
   return false
 }

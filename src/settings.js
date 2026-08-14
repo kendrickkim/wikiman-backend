@@ -1,7 +1,7 @@
 import { db } from './db.js'
 import path from 'node:path'
 import { normalizeEditorType } from './editors.js'
-import { getHomePostIds, hasHomepagePosts } from './homepage.js'
+import { getHomePostIds } from './homepage.js'
 
 const DEFAULT_PLANTUML = 'https://www.plantuml.com/plantuml'
 const DEFAULT_MAX_ATTACHMENT_MB = 20
@@ -92,7 +92,7 @@ export function getSettings() {
     categoryTreeExpand: normalizeCategoryTreeExpand(map.category_tree_expand, 'expanded'),
     fontScale: normalizeFontScale(map.font_scale, 100),
     homePostIds,
-    hasHomepage: hasHomepagePosts()
+    hasHomepage: homePostIds.length > 0
   }
 }
 

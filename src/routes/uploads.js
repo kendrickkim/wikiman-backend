@@ -1,5 +1,3 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { Router } from 'express'
 import multer from 'multer'
 import { MAX_FILES_PER_REQUEST, deleteOrphanUploads, summarizeOrphanUploads } from '../attachments.js'
@@ -155,15 +153,6 @@ router.get('/orphans', requireWriter, (_req, res) => {
 
 router.post('/orphans/cleanup', requireWriter, (_req, res) => {
   res.json(deleteOrphanUploads(db))
-})
-
-router.get('/:filename', (req, res) => {
-  const filename = path.basename(req.params.filename)
-  const filePath = path.join(uploadsDir, filename)
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
-  }
-  res.sendFile(filePath)
 })
 
 export default router

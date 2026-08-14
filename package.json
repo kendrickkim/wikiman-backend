@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "import:dokuwiki": "node scripts/import-dokuwiki.mjs"
+    "import:dokuwiki": "node scripts/import-dokuwiki.mjs",
+    "lint": "node scripts/syntax-check.mjs",
+    "test": "node --test --test-concurrency=1 test/**/*.test.js",
+    "check": "npm run lint && npm test"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

@@ -10,8 +10,8 @@ RUN echo "#!/bin/bash" >> /bin/start_service.sh && \
 
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y adduser vim openssh-server && \
-    apt-get install -y curl \
-    apt-get install -y build-essential \
+    apt-get install -y curl && \
+    apt-get install -y build-essential && \
     mkdir /www && \
     mkdir /www/default
 

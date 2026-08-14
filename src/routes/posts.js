@@ -8,9 +8,11 @@ import {
   attachmentsByPostIds,
   deletePostUploadFiles,
   normalizeAttachments,
-  replacePostAttachments
+  replacePostAttachments,
+  syncUploadRefs,
+  unlinkStoredNames
 } from '../attachments.js'
-import { requireAuth, requireWriter } from '../middleware/auth.js'
+import { requireWriter } from '../middleware/auth.js'
 import {
   applyHomepageFlag,
   getHomePostIds,
@@ -18,9 +20,26 @@ import {
   removeHomepagePost,
   setHomepageOrder
 } from '../homepage.js'
-import { categoryRequiresLogin, loginRequiredCategoryIds } from './categories.js'
+import { canReadPost, visibilityFilter } from '../access.js'
+import { rewriteContentFileUrls } from '../fileUrls.js'
+import { sanitizePostContent } from '../sanitize.js'
+import { canAccessStoredFile, resolveUploadPath, sendUploadFile } from '../files.js'
 
 const router = Router()
+
+let stmts = null
+let stmtsDb = null
+
+function statements() {
+  if (stmts && stmtsDb === db) return stmts
+  stmtsDb = db
+  stmts = {
+    getPost: db.prepare('SELECT * FROM posts WHERE id = ?'),
+    getCategory: db.prepare('SELECT id FROM categories WHERE id = ?'),
+    allCategories: db.prepare('SELECT id, parent_id FROM categories')
+  }
+  return stmts
+}
 
 function slugify(title) {
   const base = String(title)
@@ -32,30 +51,8 @@ function slugify(title) {
   return `${base}-${Date.now().toString(36)}`
 }
 
-function visibilityFilter(user) {
-  if (user) {
-    return {
-      sql: `posts.deleted_at IS NULL AND ((posts.status = 'published' AND (posts.visibility = 'public' OR posts.author_id = ?)) OR (posts.status = 'draft' AND posts.author_id = ?))`,
-      params: [user.id, user.id]
-    }
-  }
-
-  const privateCats = loginRequiredCategoryIds()
-  if (!privateCats.length) {
-    return {
-      sql: "posts.deleted_at IS NULL AND posts.status = 'published' AND posts.visibility = 'public'",
-      params: []
-    }
-  }
-  return {
-    sql: `posts.deleted_at IS NULL AND posts.status = 'published' AND posts.visibility = 'public'
-      AND (posts.category_id IS NULL OR posts.category_id NOT IN (${privateCats.map(() => '?').join(',')}))`,
-    params: [...privateCats]
-  }
-}
-
 function descendantIds(categoryId) {
-  const all = db.prepare('SELECT id, parent_id FROM categories').all()
+  const all = statements().allCategories.all()
   const children = new Map()
   for (const row of all) {
     const key = row.parent_id ?? 0
@@ -92,16 +89,17 @@ function mapPost(row, { includeContent = false, keywords = [], isHomepage = fals
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
-  if (includeContent) post.content = row.content
+  if (includeContent) {
+    post.content = sanitizePostContent(row.editor_type, row.content)
+  }
   return post
 }
 
 function withKeywords(rows, options = {}) {
   const map = keywordsByPostIds(db, rows.map((row) => row.id))
   const files = options.includeContent ? attachmentsByPostIds(db, rows.map((row) => row.id)) : null
-  const homeSort = getHomepageSortMap()
   return rows.map((row) => {
-    const sort = homeSort.has(row.id) ? homeSort.get(row.id) : null
+    const sort = row.homepage_sort != null ? Number(row.homepage_sort) : null
     const post = mapPost(row, {
       ...options,
       keywords: map.get(row.id) || [],
@@ -125,13 +123,9 @@ function parseHomepageSort(body) {
   return Math.max(0, Math.min(9999, n))
 }
 
-function canReadPost(row, user) {
-  if (!row || row.deleted_at) return false
-  const isOwner = user?.id === row.author_id
-  if (row.status === 'draft' && !isOwner) return false
-  if (row.visibility === 'private' && !isOwner) return false
-  if (!user && categoryRequiresLogin(row.category_id)) return false
-  return true
+function prepareContent(editorType, content, postId) {
+  const sanitized = sanitizePostContent(editorType, content)
+  return rewriteContentFileUrls(sanitized, postId)
 }
 
 const LIST_SELECT = `
@@ -139,10 +133,12 @@ const LIST_SELECT = `
     posts.id, posts.title, posts.slug, posts.category_id, posts.author_id,
     posts.visibility, posts.status, posts.editor_type, posts.created_at, posts.updated_at, posts.deleted_at,
     users.username AS author_name,
-    categories.name AS category_name
+    categories.name AS category_name,
+    homepage_posts.sort_order AS homepage_sort
   FROM posts
   JOIN users ON users.id = posts.author_id
   LEFT JOIN categories ON categories.id = posts.category_id
+  LEFT JOIN homepage_posts ON homepage_posts.post_id = posts.id
 `
 
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -173,6 +169,60 @@ function listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, pagi
     LIMIT ? OFFSET ?
   `).all(...queryParams, ...orderParams, paging.pageSize, offset)
   return { rows, total, page, pageSize: paging.pageSize }
+}
+
+function searchClauses(q) {
+  const like = `%${q.replace(/[%_]/g, '')}%`
+  const ftsQuery = q
+    .replace(/['"]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((term) => `"${term}"*`)
+    .join(' AND ')
+  const keywordTitle = `(
+    EXISTS (
+      SELECT 1 FROM post_keywords pk
+      WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
+    )
+    OR posts.title LIKE ?
+  )`
+  const withFts = ftsQuery
+    ? `(
+        EXISTS (
+          SELECT 1 FROM post_keywords pk
+          WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
+        )
+        OR posts.id IN (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?)
+        OR posts.title LIKE ?
+      )`
+    : keywordTitle
+  const ftsParams = ftsQuery ? [like, ftsQuery, like] : [like, like]
+  const fallbackParams = [like, like]
+  const orderSql = `
+    ORDER BY
+      CASE
+        WHEN EXISTS (
+          SELECT 1 FROM post_keywords pk
+          WHERE pk.post_id = posts.id AND lower(pk.keyword) = lower(?)
+        ) THEN 0
+        WHEN EXISTS (
+          SELECT 1 FROM post_keywords pk
+          WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
+        ) THEN 1
+        WHEN posts.title LIKE ? THEN 2
+        ELSE 3
+      END,
+      posts.updated_at DESC, posts.id DESC
+  `
+  return {
+    like,
+    withFts,
+    ftsParams,
+    keywordTitle,
+    fallbackParams,
+    orderSql,
+    orderParams: [q, like, like]
+  }
 }
 
 router.get('/', (req, res) => {
@@ -211,91 +261,32 @@ router.get('/', (req, res) => {
   }
 
   const q = String(req.query.q || '').trim()
-  const like = q ? `%${q.replace(/[%_]/g, '')}%` : ''
   let orderSql = 'ORDER BY posts.updated_at DESC, posts.id DESC'
   let orderParams = []
+  const baseWhere = [...where]
+  const baseParams = [...queryParams]
+  let search = null
   if (q) {
-    const ftsQuery = q
-      .replace(/['"]/g, ' ')
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((term) => `"${term}"*`)
-      .join(' AND ')
-    if (ftsQuery) {
-      where.push(`(
-        EXISTS (
-          SELECT 1 FROM post_keywords pk
-          WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
-        )
-        OR posts.id IN (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?)
-        OR posts.title LIKE ? OR posts.content LIKE ?
-      )`)
-      queryParams.push(like, ftsQuery, like, like)
-    } else {
-      where.push(`(
-        EXISTS (
-          SELECT 1 FROM post_keywords pk
-          WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
-        )
-        OR posts.title LIKE ? OR posts.content LIKE ?
-      )`)
-      queryParams.push(like, like, like)
-    }
-    orderSql = `
-      ORDER BY
-        CASE
-          WHEN EXISTS (
-            SELECT 1 FROM post_keywords pk
-            WHERE pk.post_id = posts.id AND lower(pk.keyword) = lower(?)
-          ) THEN 0
-          WHEN EXISTS (
-            SELECT 1 FROM post_keywords pk
-            WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
-          ) THEN 1
-          WHEN posts.title LIKE ? THEN 2
-          ELSE 3
-        END,
-        posts.updated_at DESC, posts.id DESC
-    `
-    orderParams = [q, like, like]
+    search = searchClauses(q)
+    where.push(search.withFts)
+    queryParams.push(...search.ftsParams)
+    orderSql = search.orderSql
+    orderParams = search.orderParams
   }
 
   const whereSql = where.join(' AND ')
   let result
   try {
     result = listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, paging)
-  } catch {
-    const fallbackLike = `%${q.replace(/[%_]/g, '')}%`
-    const vis = visibilityFilter(req.user)
-    const fallbackWhere = `${vis.sql} AND (
-        EXISTS (
-          SELECT 1 FROM post_keywords pk
-          WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
-        )
-        OR posts.title LIKE ? OR posts.content LIKE ?
-      )`
-    const fallbackOrder = `
-      ORDER BY
-        CASE
-          WHEN EXISTS (
-            SELECT 1 FROM post_keywords pk
-            WHERE pk.post_id = posts.id AND lower(pk.keyword) = lower(?)
-          ) THEN 0
-          WHEN EXISTS (
-            SELECT 1 FROM post_keywords pk
-            WHERE pk.post_id = posts.id AND pk.keyword LIKE ?
-          ) THEN 1
-          WHEN posts.title LIKE ? THEN 2
-          ELSE 3
-        END,
-        posts.updated_at DESC, posts.id DESC
-    `
+  } catch (err) {
+    if (!search) throw err
+    const fallbackWhere = [...baseWhere, search.keywordTitle]
     result = listFromSql(
       fromSql,
-      fallbackWhere,
-      [...vis.params, fallbackLike, fallbackLike, fallbackLike],
-      fallbackOrder,
-      [q, fallbackLike, fallbackLike],
+      fallbackWhere.join(' AND '),
+      [...baseParams, ...search.fallbackParams],
+      search.orderSql,
+      search.orderParams,
       paging
     )
   }
@@ -326,13 +317,11 @@ router.get('/keywords', (req, res) => {
     ORDER BY count DESC, pk.keyword COLLATE NOCASE ASC
     LIMIT 500
   `).all(...queryParams)
-  const keywordItems = rows.map((row) => ({
+  res.json({
+    keywords: rows.map((row) => ({
       name: row.keyword,
       count: Number(row.count) || 0
     }))
-  res.json({
-    keywords: keywordItems.map((item) => item.name),
-    keywordItems
   })
 })
 
@@ -342,7 +331,7 @@ router.get('/homepage', (req, res) => {
     return res.json({ posts: [] })
   }
   const rows = db.prepare(`
-    ${LIST_SELECT.replace('posts.updated_at', 'posts.updated_at, posts.content')}
+    ${LIST_SELECT.replace('posts.updated_at, posts.deleted_at', 'posts.updated_at, posts.deleted_at, posts.content')}
     WHERE posts.id IN (${ids.map(() => '?').join(',')})
   `).all(...ids)
   const byId = new Map(rows.map((row) => [row.id, row]))
@@ -359,7 +348,7 @@ router.put('/homepage/order', requireWriter, (req, res) => {
   }
 })
 
-router.get('/trash', requireAuth, (req, res) => {
+router.get('/trash', requireWriter, (req, res) => {
   const rows = db.prepare(`
     ${LIST_SELECT}
     WHERE posts.deleted_at IS NOT NULL
@@ -369,33 +358,47 @@ router.get('/trash', requireAuth, (req, res) => {
 })
 
 router.post('/:id/restore', requireWriter, (req, res) => {
-  const existing = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id)
+  const existing = statements().getPost.get(req.params.id)
   if (!existing || !existing.deleted_at) {
     return res.status(404).json({ error: '휴지통에서 글을 찾을 수 없습니다.' })
   }
   db.prepare("UPDATE posts SET deleted_at = NULL, updated_at = datetime('now') WHERE id = ?").run(existing.id)
   const row = db.prepare(`
-    ${LIST_SELECT.replace('posts.updated_at', 'posts.updated_at, posts.content')}
+    ${LIST_SELECT.replace('posts.updated_at, posts.deleted_at', 'posts.updated_at, posts.deleted_at, posts.content')}
     WHERE posts.id = ?
   `).get(existing.id)
   res.json({ post: withKeywords([row], { includeContent: true })[0] })
 })
 
 router.delete('/:id/permanent', requireWriter, (req, res) => {
-  const existing = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id)
+  const existing = statements().getPost.get(req.params.id)
   if (!existing || !existing.deleted_at) {
     return res.status(404).json({ error: '휴지통에서 글을 찾을 수 없습니다.' })
   }
+  let pendingUnlink = []
   db.transaction(() => {
-    deletePostUploadFiles(db, existing)
+    pendingUnlink = deletePostUploadFiles(db, existing)
     db.prepare('DELETE FROM posts WHERE id = ?').run(existing.id)
   })()
+  unlinkStoredNames(pendingUnlink)
   res.json({ ok: true })
+})
+
+router.get('/:id/files/:name', (req, res) => {
+  const storedName = path.basename(req.params.name)
+  if (!canAccessStoredFile(storedName, req.user, { postId: Number(req.params.id) })) {
+    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+  }
+  const filePath = resolveUploadPath(storedName)
+  if (!filePath) {
+    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+  }
+  sendUploadFile(res, filePath)
 })
 
 router.get('/:id', (req, res) => {
   const row = db.prepare(`
-    ${LIST_SELECT.replace('posts.updated_at', 'posts.updated_at, posts.content')}
+    ${LIST_SELECT.replace('posts.updated_at, posts.deleted_at', 'posts.updated_at, posts.deleted_at, posts.content')}
     WHERE posts.id = ?
   `).get(req.params.id)
 
@@ -407,7 +410,7 @@ router.get('/:id', (req, res) => {
 })
 
 router.get('/:id/attachments/:attachmentId', (req, res) => {
-  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id)
+  const post = statements().getPost.get(req.params.id)
   if (!canReadPost(post, req.user)) {
     return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
   }
@@ -421,6 +424,7 @@ router.get('/:id/attachments/:attachmentId', (req, res) => {
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
   }
+  res.setHeader('X-Content-Type-Options', 'nosniff')
   res.download(filePath, row.original_name)
 })
 
@@ -429,12 +433,12 @@ router.post('/', requireWriter, (req, res) => {
   const visibility = req.body?.visibility === 'private' ? 'private' : 'public'
   const status = req.body?.status === 'published' ? 'published' : 'draft'
   const editorType = normalizeEditorType(req.body?.editorType)
-  const content = req.body?.content == null ? emptyEditorContent(editorType) : String(req.body.content)
+  const rawContent = req.body?.content == null ? emptyEditorContent(editorType) : String(req.body.content)
   let categoryId = req.body?.categoryId ?? req.body?.category_id ?? null
   if (categoryId === '' || categoryId === 0) categoryId = null
 
   if (categoryId != null) {
-    const category = db.prepare('SELECT id FROM categories WHERE id = ?').get(categoryId)
+    const category = statements().getCategory.get(categoryId)
     if (!category) {
       return res.status(400).json({ error: '카테고리를 찾을 수 없습니다.' })
     }
@@ -443,20 +447,28 @@ router.post('/', requireWriter, (req, res) => {
   const keywords = normalizeKeywords(req.body?.keywords)
   const attachments = normalizeAttachments(req.body?.attachments)
   const slug = slugify(title)
+  let pendingUnlink = []
   const result = db.transaction(() => {
+    const content = sanitizePostContent(editorType, rawContent)
     const inserted = db.prepare(`
       INSERT INTO posts (title, slug, category_id, author_id, visibility, status, editor_type, content)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(title, slug, categoryId, req.user.id, visibility, status, editorType, content)
-    replacePostKeywords(db, inserted.lastInsertRowid, keywords)
-    replacePostAttachments(db, inserted.lastInsertRowid, attachments)
+    const postId = inserted.lastInsertRowid
+    const rewritten = rewriteContentFileUrls(content, postId)
+    if (rewritten !== content) {
+      db.prepare('UPDATE posts SET content = ? WHERE id = ?').run(rewritten, postId)
+    }
+    replacePostKeywords(db, postId, keywords)
+    pendingUnlink = replacePostAttachments(db, postId, attachments)
     const homepage = parseHomepageFlag(req.body)
-    if (homepage != null) applyHomepageFlag(inserted.lastInsertRowid, homepage, parseHomepageSort(req.body))
-    return inserted.lastInsertRowid
+    if (homepage != null) applyHomepageFlag(postId, homepage, parseHomepageSort(req.body))
+    return postId
   })()
+  unlinkStoredNames(pendingUnlink)
 
   const row = db.prepare(`
-    ${LIST_SELECT.replace('posts.updated_at', 'posts.updated_at, posts.content')}
+    ${LIST_SELECT.replace('posts.updated_at, posts.deleted_at', 'posts.updated_at, posts.deleted_at, posts.content')}
     WHERE posts.id = ?
   `).get(result)
 
@@ -464,7 +476,7 @@ router.post('/', requireWriter, (req, res) => {
 })
 
 router.patch('/:id', requireWriter, (req, res) => {
-  const existing = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id)
+  const existing = statements().getPost.get(req.params.id)
   if (!existing || existing.deleted_at) {
     return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
   }
@@ -477,7 +489,7 @@ router.patch('/:id', requireWriter, (req, res) => {
     if (categoryId === '' || categoryId === 0) categoryId = null
   }
   if (categoryId != null) {
-    const category = db.prepare('SELECT id FROM categories WHERE id = ?').get(categoryId)
+    const category = statements().getCategory.get(categoryId)
     if (!category) {
       return res.status(400).json({ error: '카테고리를 찾을 수 없습니다.' })
     }
@@ -492,7 +504,9 @@ router.patch('/:id', requireWriter, (req, res) => {
   const editorType = req.body?.editorType
     ? normalizeEditorType(req.body.editorType)
     : existing.editor_type
-  const content = req.body?.content != null ? String(req.body.content) : existing.content
+  const content = req.body?.content != null
+    ? prepareContent(editorType, req.body.content, existing.id)
+    : rewriteContentFileUrls(existing.content, existing.id)
   const slug = title !== existing.title ? slugify(title) : existing.slug
   const keywords = 'keywords' in (req.body || {})
     ? normalizeKeywords(req.body.keywords)
@@ -501,6 +515,7 @@ router.patch('/:id', requireWriter, (req, res) => {
     ? normalizeAttachments(req.body.attachments)
     : null
 
+  let pendingUnlink = []
   db.transaction(() => {
     db.prepare(`
       UPDATE posts
@@ -509,7 +524,8 @@ router.patch('/:id', requireWriter, (req, res) => {
       WHERE id = ?
     `).run(title, slug, categoryId, visibility, status, editorType, content, existing.id)
     if (keywords) replacePostKeywords(db, existing.id, keywords)
-    if (attachments) replacePostAttachments(db, existing.id, attachments)
+    if (attachments) pendingUnlink = replacePostAttachments(db, existing.id, attachments)
+    else syncUploadRefs(db, existing.id)
     const homepage = parseHomepageFlag(req.body)
     if (homepage != null) applyHomepageFlag(existing.id, homepage, parseHomepageSort(req.body))
     else if ('homepageSort' in (req.body || {})) {
@@ -517,9 +533,10 @@ router.patch('/:id', requireWriter, (req, res) => {
       if (sort != null) applyHomepageFlag(existing.id, true, parseHomepageSort(req.body))
     }
   })()
+  unlinkStoredNames(pendingUnlink)
 
   const row = db.prepare(`
-    ${LIST_SELECT.replace('posts.updated_at', 'posts.updated_at, posts.content')}
+    ${LIST_SELECT.replace('posts.updated_at, posts.deleted_at', 'posts.updated_at, posts.deleted_at, posts.content')}
     WHERE posts.id = ?
   `).get(existing.id)
 
@@ -527,7 +544,7 @@ router.patch('/:id', requireWriter, (req, res) => {
 })
 
 router.delete('/:id', requireWriter, (req, res) => {
-  const existing = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id)
+  const existing = statements().getPost.get(req.params.id)
   if (!existing || existing.deleted_at) {
     return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
   }

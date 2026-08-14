@@ -1,15 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { uploadsDir } from './db.js'
+import { extractStoredNamesFromContent, fileUrlForPost } from './fileUrls.js'
 
 export const MAX_FILES_PER_REQUEST = 20
 export const MAX_ATTACHMENTS = 50
-/** @deprecated 설정값 getMaxAttachmentBytes()를 사용하세요 */
-export const MAX_FILE_SIZE = 20 * 1024 * 1024
-
-// Markdown URL의 닫는 괄호는 파일명에 포함하지 않습니다.
-// 예: ![이미지](/api/files/example.png)
-const FILE_URL_RE = /\/api\/files\/([^/?#"'\s<>\\)]+)/g
 
 export function mapAttachment(row) {
   return {
@@ -18,7 +13,7 @@ export function mapAttachment(row) {
     originalName: row.original_name,
     mimeType: row.mime_type,
     size: row.size,
-    url: `/api/files/${row.stored_name}`,
+    url: fileUrlForPost(row.post_id, row.stored_name),
     downloadUrl: `/api/posts/${row.post_id}/attachments/${row.id}`
   }
 }
@@ -58,25 +53,6 @@ export function normalizeAttachments(input) {
   return list
 }
 
-export function extractStoredNamesFromContent(content) {
-  const names = new Set()
-  const text = String(content || '')
-  FILE_URL_RE.lastIndex = 0
-  let match
-  while ((match = FILE_URL_RE.exec(text))) {
-    let raw = match[1]
-    try {
-      raw = decodeURIComponent(raw)
-    } catch {
-      // keep raw
-    }
-    const storedName = path.basename(raw)
-    if (!storedName || storedName.includes('..')) continue
-    names.add(storedName)
-  }
-  return names
-}
-
 function faviconStoredName(db) {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'favicon'").get()
   const value = String(row?.value || '')
@@ -84,34 +60,45 @@ function faviconStoredName(db) {
   return match ? path.basename(match[1]) : ''
 }
 
-function collectUsedStoredNames(db, excludePostId = null) {
+function usedStoredNames(db, excludePostId = null) {
   const used = new Set()
   const favicon = faviconStoredName(db)
   if (favicon) used.add(favicon)
 
+  const refSql = excludePostId == null
+    ? 'SELECT DISTINCT stored_name FROM upload_refs'
+    : 'SELECT DISTINCT stored_name FROM upload_refs WHERE post_id != ?'
+  const refRows = excludePostId == null
+    ? db.prepare(refSql).all()
+    : db.prepare(refSql).all(excludePostId)
+  for (const row of refRows) used.add(row.stored_name)
+
   const attachmentSql = excludePostId == null
-    ? 'SELECT stored_name FROM post_attachments'
-    : 'SELECT stored_name FROM post_attachments WHERE post_id != ?'
+    ? 'SELECT DISTINCT stored_name FROM post_attachments'
+    : 'SELECT DISTINCT stored_name FROM post_attachments WHERE post_id != ?'
   const attachmentRows = excludePostId == null
     ? db.prepare(attachmentSql).all()
     : db.prepare(attachmentSql).all(excludePostId)
   for (const row of attachmentRows) used.add(row.stored_name)
 
-  const postSql = excludePostId == null
-    ? 'SELECT content FROM posts'
-    : 'SELECT content FROM posts WHERE id != ?'
-  const posts = excludePostId == null
-    ? db.prepare(postSql).all()
-    : db.prepare(postSql).all(excludePostId)
-  for (const post of posts) {
-    for (const name of extractStoredNamesFromContent(post.content)) used.add(name)
-  }
   return used
+}
+
+export function syncUploadRefs(db, postId) {
+  const post = db.prepare('SELECT content FROM posts WHERE id = ?').get(postId)
+  db.prepare('DELETE FROM upload_refs WHERE post_id = ?').run(postId)
+  const insert = db.prepare('INSERT OR IGNORE INTO upload_refs (post_id, stored_name) VALUES (?, ?)')
+  for (const row of db.prepare('SELECT stored_name FROM post_attachments WHERE post_id = ?').all(postId)) {
+    insert.run(postId, row.stored_name)
+  }
+  for (const name of extractStoredNamesFromContent(post?.content)) {
+    insert.run(postId, name)
+  }
 }
 
 /** 업로드 폴더에서 글 첨부·본문·파비콘에 쓰이지 않는 파일을 찾습니다. */
 export function listOrphanUploads(db) {
-  const used = collectUsedStoredNames(db)
+  const used = usedStoredNames(db)
   const orphans = []
   for (const entry of fs.readdirSync(uploadsDir, { withFileTypes: true })) {
     if (!entry.isFile()) continue
@@ -161,6 +148,10 @@ function unlinkStoredName(storedName) {
   }
 }
 
+export function unlinkStoredNames(names) {
+  for (const name of names || []) unlinkStoredName(name)
+}
+
 export function replacePostAttachments(db, postId, attachments) {
   const previous = db.prepare('SELECT stored_name FROM post_attachments WHERE post_id = ?').all(postId)
   db.prepare('DELETE FROM post_attachments WHERE post_id = ?').run(postId)
@@ -172,29 +163,21 @@ export function replacePostAttachments(db, postId, attachments) {
     insert.run(postId, file.storedName, file.originalName, file.mimeType, file.size, index)
   })
 
-  const post = db.prepare('SELECT content FROM posts WHERE id = ?').get(postId)
-  const stillInContent = extractStoredNamesFromContent(post?.content)
+  syncUploadRefs(db, postId)
+  const used = usedStoredNames(db)
   const kept = new Set(attachments.map((file) => file.storedName))
-  const usedElsewhere = collectUsedStoredNames(db, postId)
-
+  const toUnlink = []
   for (const row of previous) {
     if (kept.has(row.stored_name)) continue
-    if (stillInContent.has(row.stored_name)) continue
-    if (usedElsewhere.has(row.stored_name)) continue
-    unlinkStoredName(row.stored_name)
+    if (used.has(row.stored_name)) continue
+    toUnlink.push(row.stored_name)
   }
-}
-
-/** @deprecated use deletePostUploadFiles */
-export function deleteAttachmentFiles(db, postId) {
-  const post = db.prepare('SELECT id, content FROM posts WHERE id = ?').get(postId)
-  if (!post) return
-  deletePostUploadFiles(db, post)
+  return toUnlink
 }
 
 /** 글의 첨부·본문 이미지 등 업로드 파일을 정리합니다. 다른 글/파비콘이 쓰는 파일은 남깁니다. */
 export function deletePostUploadFiles(db, post) {
-  if (!post?.id) return
+  if (!post?.id) return []
   const names = new Set()
   for (const row of db.prepare('SELECT stored_name FROM post_attachments WHERE post_id = ?').all(post.id)) {
     names.add(row.stored_name)
@@ -203,10 +186,14 @@ export function deletePostUploadFiles(db, post) {
     names.add(name)
   }
 
-  const usedElsewhere = collectUsedStoredNames(db, post.id)
+  const usedElsewhere = usedStoredNames(db, post.id)
+  db.prepare('DELETE FROM post_attachments WHERE post_id = ?').run(post.id)
+  db.prepare('DELETE FROM upload_refs WHERE post_id = ?').run(post.id)
+
+  const toUnlink = []
   for (const storedName of names) {
     if (usedElsewhere.has(storedName)) continue
-    unlinkStoredName(storedName)
+    toUnlink.push(storedName)
   }
-  db.prepare('DELETE FROM post_attachments WHERE post_id = ?').run(post.id)
+  return toUnlink
 }

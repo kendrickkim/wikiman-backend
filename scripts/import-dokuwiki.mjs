@@ -197,22 +197,12 @@ function dokuToMarkdown(src) {
       continue
     }
 
-    // lists * or -
     const lm = line.match(/^(\s*)([*-])\s+(.*)$/)
     if (lm) {
       const depth = Math.floor(lm[1].replace(/\t/g, '  ').length / 2)
       out.push(`${'  '.repeat(depth)}- ${convertInline(lm[3])}`)
       continue
     }
-
-    // ordered
-    const om = line.match(/^(\s*)-\s+(.*)$/)
-    // already covered by *|- 
-
-    // numbered list in DW: - is unordered,  - with spaces... actually DW uses - for ul and  - numbered differently
-    // DW ordered:  - item with two spaces? Actually:  - is ul, numbered is  - no: "  - " vs "  - "
-    // DokuWiki: * or - for unordered;  - with number style is just -
-    // Keep simple.
 
     out.push(convertInline(line))
   }
@@ -343,10 +333,7 @@ async function main() {
   if (!token) fail('로그인 토큰을 받지 못했습니다.')
   console.log(`로그인: ${login.user?.username}`)
 
-  // 기존 카테고리 캐시
-  const cats = await api('GET', '/api/categories', { token })
   const catCache = new Map()
-  // 이름만으로는 경로 복원이 어려워 import 중 새로 만듦. 기존 flat은 무시하고 네임스페이스별 생성.
 
   const pages = walkTxtFiles(PAGES)
     .map((p) => ({ ...p, id: pageIdFromRel(p.rel) }))
