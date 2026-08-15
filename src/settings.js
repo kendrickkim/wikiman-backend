@@ -77,6 +77,10 @@ export function normalizeTopMenuVisible(value, fallback = true) {
   return fallback
 }
 
+export function normalizeRightMenuDefaultOpen(value, fallback = true) {
+  return normalizeTopMenuVisible(value, fallback)
+}
+
 export function normalizeMobileQuickPostEnabled(value, fallback = false) {
   if (value === true || value === false) return value
   const v = String(value ?? '').trim().toLowerCase()
@@ -84,6 +88,30 @@ export function normalizeMobileQuickPostEnabled(value, fallback = false) {
   if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false
   if (fallback === null) return null
   return fallback
+}
+
+export function normalizeBlogMode(value, fallback = false) {
+  return normalizeMobileQuickPostEnabled(value, fallback)
+}
+
+export function normalizeBlogShowHomepage(value, fallback = false) {
+  return normalizeMobileQuickPostEnabled(value, fallback)
+}
+
+export function normalizeCodeLineNumbers(value, fallback = false) {
+  return normalizeMobileQuickPostEnabled(value, fallback)
+}
+
+const MIN_BLOG_POSTS_PER_PAGE = 1
+const MAX_BLOG_POSTS_PER_PAGE = 100
+
+export function normalizeBlogPostsPerPage(value, fallback = 10) {
+  const n = Math.round(Number(value))
+  if (Number.isFinite(n) && n >= MIN_BLOG_POSTS_PER_PAGE && n <= MAX_BLOG_POSTS_PER_PAGE) return n
+  if (fallback === null) return null
+  const fb = Math.round(Number(fallback))
+  if (Number.isFinite(fb) && fb >= MIN_BLOG_POSTS_PER_PAGE && fb <= MAX_BLOG_POSTS_PER_PAGE) return fb
+  return 10
 }
 
 const QUICK_POST_PROMOTE_SOURCE_MODES = ['ask', 'delete', 'keep']
@@ -127,9 +155,14 @@ function rowMap() {
     max_attachment_mb: String(DEFAULT_MAX_ATTACHMENT_MB),
     category_tree_expand: 'expanded',
     category_tree_side: 'left',
+    right_menu_default_open: '1',
     font_scale: '100',
     top_menu_visible: '1',
     mobile_quick_post_enabled: '0',
+    blog_mode: '0',
+    blog_show_homepage: '0',
+    blog_posts_per_page: '10',
+    code_line_numbers: '0',
     quick_post_editor: 'textarea',
     quick_post_promote_source_mode: 'ask',
     quick_post_promote_editor: 'ask',
@@ -177,9 +210,14 @@ export function getSettings(user) {
     maxAttachmentMb: normalizeMaxAttachmentMb(map.max_attachment_mb, DEFAULT_MAX_ATTACHMENT_MB),
     categoryTreeExpand: normalizeCategoryTreeExpand(map.category_tree_expand, 'expanded'),
     categoryTreeSide: normalizeCategoryTreeSide(map.category_tree_side, 'left'),
+    rightMenuDefaultOpen: normalizeRightMenuDefaultOpen(map.right_menu_default_open, true),
     fontScale: normalizeFontScale(map.font_scale, 100),
     topMenuVisible: normalizeTopMenuVisible(map.top_menu_visible, true),
     mobileQuickPostEnabled: normalizeMobileQuickPostEnabled(map.mobile_quick_post_enabled, false),
+    blogMode: normalizeBlogMode(map.blog_mode, false),
+    blogShowHomepage: normalizeBlogShowHomepage(map.blog_show_homepage, false),
+    blogPostsPerPage: normalizeBlogPostsPerPage(map.blog_posts_per_page, 10),
+    codeLineNumbers: normalizeCodeLineNumbers(map.code_line_numbers, false),
     quickPostEditor: normalizeQuickPostEditor(map.quick_post_editor, 'textarea'),
     quickPostPromoteSourceMode: normalizeQuickPostPromoteSourceMode(
       map.quick_post_promote_source_mode,
@@ -282,6 +320,14 @@ export function updateSettings(input = {}, user) {
     next.categoryTreeSide = side
   }
 
+  if (input.rightMenuDefaultOpen != null) {
+    const open = normalizeRightMenuDefaultOpen(input.rightMenuDefaultOpen, null)
+    if (open == null) {
+      throw Object.assign(new Error('오른쪽 메뉴 기본 표시는 보이기 또는 숨기기만 선택할 수 있습니다.'), { status: 400 })
+    }
+    next.rightMenuDefaultOpen = open
+  }
+
   if (input.fontScale != null) {
     const scale = normalizeFontScale(input.fontScale, null)
     if (scale == null) {
@@ -304,6 +350,38 @@ export function updateSettings(input = {}, user) {
       throw Object.assign(new Error('모바일 간단 화면 사용 여부는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
     }
     next.mobileQuickPostEnabled = enabled
+  }
+
+  if (input.blogMode != null) {
+    const enabled = normalizeBlogMode(input.blogMode, null)
+    if (enabled == null) {
+      throw Object.assign(new Error('블로그 모드는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
+    }
+    next.blogMode = enabled
+  }
+
+  if (input.blogShowHomepage != null) {
+    const enabled = normalizeBlogShowHomepage(input.blogShowHomepage, null)
+    if (enabled == null) {
+      throw Object.assign(new Error('홈페이지로 설정한 글 표시는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
+    }
+    next.blogShowHomepage = enabled
+  }
+
+  if (input.blogPostsPerPage != null) {
+    const size = normalizeBlogPostsPerPage(input.blogPostsPerPage, null)
+    if (size == null) {
+      throw Object.assign(new Error('블로그 한 페이지 글 수는 1~100개로 입력하세요.'), { status: 400 })
+    }
+    next.blogPostsPerPage = size
+  }
+
+  if (input.codeLineNumbers != null) {
+    const enabled = normalizeCodeLineNumbers(input.codeLineNumbers, null)
+    if (enabled == null) {
+      throw Object.assign(new Error('코드 라인 번호 표시는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
+    }
+    next.codeLineNumbers = enabled
   }
 
   if (input.quickPostEditor != null) {
@@ -355,9 +433,14 @@ export function updateSettings(input = {}, user) {
     upsert('max_attachment_mb', String(next.maxAttachmentMb))
     upsert('category_tree_expand', next.categoryTreeExpand)
     upsert('category_tree_side', next.categoryTreeSide)
+    upsert('right_menu_default_open', next.rightMenuDefaultOpen ? '1' : '0')
     upsert('font_scale', String(next.fontScale))
     upsert('top_menu_visible', next.topMenuVisible ? '1' : '0')
     upsert('mobile_quick_post_enabled', next.mobileQuickPostEnabled ? '1' : '0')
+    upsert('blog_mode', next.blogMode ? '1' : '0')
+    upsert('blog_show_homepage', next.blogShowHomepage ? '1' : '0')
+    upsert('blog_posts_per_page', String(next.blogPostsPerPage))
+    upsert('code_line_numbers', next.codeLineNumbers ? '1' : '0')
     upsert('quick_post_editor', next.quickPostEditor)
     upsert('quick_post_promote_source_mode', next.quickPostPromoteSourceMode)
     upsert('quick_post_promote_editor', next.quickPostPromoteEditor)

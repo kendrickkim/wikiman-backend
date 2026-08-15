@@ -172,6 +172,16 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     ]
   )
 
+  const bareDomainMenu = await json(await fetch(`${base}/api/settings/top-menu`, {
+    method: 'PUT',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      items: [{ label: '도메인만', url: 'example.com/path' }]
+    })
+  }))
+  assert.equal(bareDomainMenu.items[0].url, 'https://example.com/path')
+
+
   const byTitle = await json(await fetch(`${base}/api/posts?q=${encodeURIComponent('검색제목')}`))
   assert.equal(byTitle.posts.some((post) => post.id === postId), true)
 
@@ -180,6 +190,13 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
 
   const byContent = await json(await fetch(`${base}/api/posts?q=${encodeURIComponent('본문에만있는단어')}`))
   assert.equal(byContent.posts.some((post) => post.id === postId), true)
+  assert.equal('content' in byContent.posts.find((post) => post.id === postId), false)
+
+  const withContent = await json(await fetch(`${base}/api/posts?includeContent=1&status=published&pageSize=10`))
+  assert.equal(Array.isArray(withContent.posts), true)
+  assert.equal(withContent.posts.length > 0, true)
+  assert.equal(typeof withContent.posts[0].content, 'string')
+  assert.equal(Array.isArray(withContent.posts[0].attachments), true)
 
   const keywords = await json(await fetch(`${base}/api/posts/keywords`))
   assert.equal(Array.isArray(keywords.keywords), true)
@@ -200,14 +217,61 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   const htmlPost = await json(await fetch(`${base}/api/posts/${htmlId}`))
   assert.equal(htmlPost.post.content.includes('<script'), false)
 
+  const moveCat = await json(await fetch(`${base}/api/categories`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '이동원본' })
+  }))
+  const moveTarget = await json(await fetch(`${base}/api/categories`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '이동대상' })
+  }))
+  const movePost = await json(await fetch(`${base}/api/posts`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: '이동할 글',
+      content: '본문',
+      editorType: 'textarea',
+      status: 'published',
+      visibility: 'public',
+      categoryId: moveCat.category.id
+    })
+  }))
+  const stats = await json(await fetch(`${base}/api/categories/${moveCat.category.id}/post-stats`, {
+    headers: auth
+  }))
+  assert.equal(stats.direct, 1)
+  const reassigned = await json(await fetch(`${base}/api/categories/${moveCat.category.id}/reassign-posts`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ targetCategoryId: moveTarget.category.id })
+  }))
+  assert.equal(reassigned.moved, 1)
+  const movedPost = await json(await fetch(`${base}/api/posts/${movePost.post.id}`, { headers: auth }))
+  assert.equal(movedPost.post.categoryId, moveTarget.category.id)
+
   const trashAnon = await fetch(`${base}/api/posts/trash`)
   assert.equal(trashAnon.status, 401)
+
+  const settingsDefaults = await json(await fetch(`${base}/api/settings`))
+  assert.equal(settingsDefaults.blogMode, false)
+  assert.equal(settingsDefaults.blogShowHomepage, false)
+  assert.equal(settingsDefaults.blogPostsPerPage, 10)
+  assert.equal(settingsDefaults.codeLineNumbers, false)
+  assert.equal(settingsDefaults.rightMenuDefaultOpen, true)
 
   const settingsSaved = await json(await fetch(`${base}/api/settings`, {
     method: 'PATCH',
     headers: { ...auth, 'content-type': 'application/json' },
     body: JSON.stringify({
       mobileQuickPostEnabled: true,
+      blogMode: true,
+      blogShowHomepage: true,
+      blogPostsPerPage: 20,
+      codeLineNumbers: true,
+      rightMenuDefaultOpen: false,
       quickPostEditor: 'textarea',
       quickPostPromoteSourceMode: 'ask',
       quickPostPromoteEditor: 'ask',
@@ -216,11 +280,30 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     })
   }))
   assert.equal(settingsSaved.mobileQuickPostEnabled, true)
+  assert.equal(settingsSaved.blogMode, true)
+  assert.equal(settingsSaved.blogShowHomepage, true)
+  assert.equal(settingsSaved.blogPostsPerPage, 20)
+  assert.equal(settingsSaved.codeLineNumbers, true)
+  assert.equal(settingsSaved.rightMenuDefaultOpen, false)
   assert.equal(settingsSaved.quickPostEditor, 'textarea')
   assert.equal(settingsSaved.quickPostPromoteSourceMode, 'ask')
   assert.equal(settingsSaved.quickPostPromoteEditor, 'ask')
   assert.equal(settingsSaved.linkPreviewCacheTtlDays, 15)
   assert.equal(settingsSaved.linkPreviewFailureTtlDays, 2)
+
+  const customBlogPageSize = await json(await fetch(`${base}/api/settings`, {
+    method: 'PATCH',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ blogPostsPerPage: 7 })
+  }))
+  assert.equal(customBlogPageSize.blogPostsPerPage, 7)
+
+  const badBlogPageSize = await fetch(`${base}/api/settings`, {
+    method: 'PATCH',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ blogPostsPerPage: 0 })
+  })
+  assert.equal(badBlogPageSize.status, 400)
 
   const emptyQuick = await fetch(`${base}/api/quick-posts`, {
     method: 'POST',

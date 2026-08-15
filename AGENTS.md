@@ -9,7 +9,7 @@ Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`)
 - `src/routes/` — `/api/auth`, `/posts`, `/quick-posts`, `/categories`, `/uploads`, `/plantuml`, `/link-preview`, `/settings`, `/backup`
 - `src/db.js` — 스키마·시드. WAL. 데이터는 `data/` (git 제외)
 - `src/middleware/auth.js` — JWT, `optionalAuth` / `requireAuth` / `requireWriter`
-- `src/settings.js` — `settings` 키/값. `favicon`은 사이트 아이콘. 홈페이지 글은 `homepage_posts` 테이블. 카테고리 트리 기본 펼침은 `category_tree_expand`(`expanded`|`collapsed`|`root`). 글자 스케일은 `font_scale`(60~120, 기본 100). 기본 에디터는 `default_editor`(데스크톱)·`default_editor_mobile`(모바일). 모바일 간단 화면은 `mobile_quick_post_enabled`, 간단 포스트 작성 에디터는 `quick_post_editor`, 일반 포스트 이동 시 에디터는 `quick_post_promote_editor`(`ask`|에디터 종류), 이동 후 원본 처리는 `quick_post_promote_source_mode`(`ask`|`delete`|`keep`). 링크 캐시 TTL은 `link_preview_cache_ttl_days`, 만료 후 조회 실패 시 연장 TTL은 `link_preview_failure_ttl_days`.
+- `src/settings.js` — `settings` 키/값. `favicon`은 사이트 아이콘. 홈페이지 글은 `homepage_posts` 테이블. 카테고리 트리 기본 펼침은 `category_tree_expand`(`expanded`|`collapsed`|`root`). 카테고리 트리 위치는 `category_tree_side`(`left`|`right`). 오른쪽 메뉴 기본 열림은 `right_menu_default_open`. 글자 스케일은 `font_scale`(60~120, 기본 100). 기본 에디터는 `default_editor`(데스크톱)·`default_editor_mobile`(모바일). 모바일 간단 화면은 `mobile_quick_post_enabled`, 간단 포스트 작성 에디터는 `quick_post_editor`, 일반 포스트 이동 시 에디터는 `quick_post_promote_editor`(`ask`|에디터 종류), 이동 후 원본 처리는 `quick_post_promote_source_mode`(`ask`|`delete`|`keep`). 블로그 모드는 `blog_mode`, 블로그 한 페이지 글 수는 `blog_posts_per_page`(1~100, 기본 10). Markdown 코드 블록 라인 번호는 `code_line_numbers`. 링크 캐시 TTL은 `link_preview_cache_ttl_days`, 만료 후 조회 실패 시 연장 TTL은 `link_preview_failure_ttl_days`.
 - `src/db.js` — 스키마는 정수 `schema_version`(settings). 파일 참조는 `upload_refs`. 간단 포스트는 `quick_posts`. 링크 미리보기 캐시는 `link_preview_cache`.
 
 에러 응답: `{ error: '한국어 메시지' }`. HTTP 상태 코드를 맞춥니다.
@@ -18,6 +18,7 @@ Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`)
 
 - 첫 가입 계정이 `role=writer`. 이후 가입은 닫힙니다.
 - 변경 API(글·카테고리·업로드·설정)는 `requireWriter`.
+- 카테고리: CRUD는 `/api/categories`. `GET /:id/post-stats`는 글 수(직접/하위 포함), `POST /:id/reassign-posts`는 해당(또는 하위 포함) 카테고리의 글을 다른 카테고리·미분류로 옮깁니다.
 - 목록/상세: 발행+공개 글은 누구나. 작성중·비공개 글은 작성자만. 비공개 카테고리(및 그 하위)의 글은 로그인한 사용자만. 휴지통(`deleted_at`) 글은 일반 조회에서 제외. 휴지통 API는 작성자만.
 - `GET /posts` 목록은 `page`(1부터), `pageSize`(10/20/50/100, 기본 10). 응답에 `total`, `page`, `pageSize`.
 - `GET /posts?keyword=`는 키워드 정확히 일치 필터. `GET /posts/keywords`는 `{ keywords: [{ name, count }] }`.

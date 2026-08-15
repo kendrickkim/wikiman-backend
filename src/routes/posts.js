@@ -141,18 +141,21 @@ const LIST_SELECT = `
   LEFT JOIN homepage_posts ON homepage_posts.post_id = posts.id
 `
 
-const PAGE_SIZES = [10, 20, 50, 100]
 const DEFAULT_PAGE_SIZE = 10
+const MIN_PAGE_SIZE = 1
+const MAX_PAGE_SIZE = 100
 
 function parsePaging(query) {
-  const sizeRaw = Number(query?.pageSize ?? query?.limit)
-  const pageSize = PAGE_SIZES.includes(sizeRaw) ? sizeRaw : DEFAULT_PAGE_SIZE
+  const sizeRaw = Math.round(Number(query?.pageSize ?? query?.limit))
+  const pageSize = Number.isFinite(sizeRaw) && sizeRaw >= MIN_PAGE_SIZE && sizeRaw <= MAX_PAGE_SIZE
+    ? sizeRaw
+    : DEFAULT_PAGE_SIZE
   const pageRaw = Math.floor(Number(query?.page))
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1
   return { page, pageSize }
 }
 
-function listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, paging) {
+function listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, paging, { includeContent = false } = {}) {
   const countRow = db.prepare(`
     SELECT COUNT(*) AS total
     ${fromSql}
@@ -162,8 +165,11 @@ function listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, pagi
   const pageCount = Math.max(1, Math.ceil(total / paging.pageSize) || 1)
   const page = Math.min(paging.page, pageCount)
   const offset = (page - 1) * paging.pageSize
+  const selectSql = includeContent
+    ? LIST_SELECT.replace('posts.updated_at, posts.deleted_at', 'posts.updated_at, posts.deleted_at, posts.content')
+    : LIST_SELECT
   const rows = db.prepare(`
-    ${LIST_SELECT}
+    ${selectSql}
     WHERE ${whereSql}
     ${orderSql}
     LIMIT ? OFFSET ?
@@ -230,6 +236,9 @@ router.get('/', (req, res) => {
   const where = [sql]
   const queryParams = [...params]
   const paging = parsePaging(req.query)
+  const includeContent = req.query.includeContent === '1'
+    || req.query.includeContent === 'true'
+    || req.query.includeContent === true
   const fromSql = `
     FROM posts
     JOIN users ON users.id = posts.author_id
@@ -277,7 +286,7 @@ router.get('/', (req, res) => {
   const whereSql = where.join(' AND ')
   let result
   try {
-    result = listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, paging)
+    result = listFromSql(fromSql, whereSql, queryParams, orderSql, orderParams, paging, { includeContent })
   } catch (err) {
     if (!search) throw err
     const fallbackWhere = [...baseWhere, search.keywordTitle]
@@ -287,12 +296,13 @@ router.get('/', (req, res) => {
       [...baseParams, ...search.fallbackParams],
       search.orderSql,
       search.orderParams,
-      paging
+      paging,
+      { includeContent }
     )
   }
 
   res.json({
-    posts: withKeywords(result.rows),
+    posts: withKeywords(result.rows, { includeContent }),
     total: result.total,
     page: result.page,
     pageSize: result.pageSize

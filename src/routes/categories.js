@@ -188,6 +188,91 @@ router.patch('/:id', requireWriter, (req, res) => {
   res.json({ category })
 })
 
+function descendantCategoryIds(categoryId) {
+  const rows = categoryRows()
+  const children = new Map()
+  for (const row of rows) {
+    const key = row.parent_id ?? 0
+    if (!children.has(key)) children.set(key, [])
+    children.get(key).push(row.id)
+  }
+  const ids = []
+  const stack = [Number(categoryId)]
+  const seen = new Set()
+  while (stack.length) {
+    const current = stack.pop()
+    if (!Number.isFinite(current) || seen.has(current)) continue
+    seen.add(current)
+    ids.push(current)
+    for (const child of children.get(current) || []) stack.push(child)
+  }
+  return ids
+}
+
+function parseTargetCategoryId(value) {
+  if (value == null || value === '' || value === 0 || value === '0') return null
+  const id = Number(value)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+router.get('/:id/post-stats', requireWriter, (req, res) => {
+  const id = Number(req.params.id)
+  const existing = db.prepare('SELECT id FROM categories WHERE id = ?').get(id)
+  if (!existing) {
+    return res.status(404).json({ error: '카테고리를 찾을 수 없습니다.' })
+  }
+  const direct = Number(db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM posts
+    WHERE category_id = ? AND deleted_at IS NULL
+  `).get(id)?.count || 0)
+  const ids = descendantCategoryIds(id)
+  const withDescendants = Number(db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM posts
+    WHERE deleted_at IS NULL
+      AND category_id IN (${ids.map(() => '?').join(',')})
+  `).get(...ids)?.count || 0)
+  res.json({ direct, withDescendants })
+})
+
+router.post('/:id/reassign-posts', requireWriter, (req, res) => {
+  const id = Number(req.params.id)
+  const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(id)
+  if (!existing) {
+    return res.status(404).json({ error: '카테고리를 찾을 수 없습니다.' })
+  }
+
+  const targetCategoryId = parseTargetCategoryId(req.body?.targetCategoryId ?? req.body?.target_category_id)
+  if (targetCategoryId != null) {
+    const target = db.prepare('SELECT id FROM categories WHERE id = ?').get(targetCategoryId)
+    if (!target) {
+      return res.status(400).json({ error: '이동할 대상 카테고리를 찾을 수 없습니다.' })
+    }
+  }
+  const includeDescendants = req.body?.includeDescendants === true
+    || req.body?.include_descendants === true
+  if (targetCategoryId === id && !includeDescendants) {
+    return res.status(400).json({ error: '같은 카테고리로는 이동할 수 없습니다.' })
+  }
+
+  const sourceIds = includeDescendants ? descendantCategoryIds(id) : [id]
+  const placeholders = sourceIds.map(() => '?').join(',')
+  const result = db.prepare(`
+    UPDATE posts
+    SET category_id = ?, updated_at = datetime('now')
+    WHERE deleted_at IS NULL
+      AND category_id IN (${placeholders})
+  `).run(targetCategoryId, ...sourceIds)
+
+  res.json({
+    ok: true,
+    moved: result.changes,
+    includeDescendants,
+    targetCategoryId
+  })
+})
+
 router.delete('/:id', requireWriter, (req, res) => {
   const id = Number(req.params.id)
   const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(id)

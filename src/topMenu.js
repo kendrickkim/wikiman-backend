@@ -44,7 +44,7 @@ function isReadableMenuRow(row, user, database) {
 }
 
 export function normalizeTopMenuUrl(raw) {
-  const url = String(raw ?? '').trim()
+  let url = String(raw ?? '').trim()
   if (!url) {
     throw Object.assign(new Error('URL을 입력하세요.'), { status: 400 })
   }
@@ -63,6 +63,16 @@ export function normalizeTopMenuUrl(raw) {
       throw Object.assign(new Error('내부 경로는 /로 시작하는 사이트 경로만 사용할 수 있습니다.'), { status: 400 })
     }
     return url
+  }
+
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`
+  }
+  if (url.length > MAX_MENU_URL_LENGTH) {
+    throw Object.assign(
+      new Error(`URL은 ${MAX_MENU_URL_LENGTH}자 이하여야 합니다.`),
+      { status: 400 }
+    )
   }
 
   let parsed
