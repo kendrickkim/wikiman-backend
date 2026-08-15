@@ -101,6 +101,18 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.equal(untitledSocial.title, 'Wikiman')
   assert.equal(untitledSocial.description, '제목 없는 본문')
 
+  const emptyBodyId = Number(db.prepare(`
+    INSERT INTO posts (title, slug, author_id, visibility, status, editor_type, content)
+    VALUES ('이미지만', 'empty-body-social', ?, 'public', 'published', 'markdown', '![그림](https://cdn.example.com/a.png)')
+  `).run(userId).lastInsertRowid)
+  const emptyBodySocial = socialMetaForPath(`/posts/${emptyBodyId}`, 'https://wiki.example')
+  assert.equal(emptyBodySocial.description, '')
+  const emptyBodyHtml = injectSocialMeta('<html><head></head><body></body></html>', emptyBodySocial)
+  assert.doesNotMatch(emptyBodyHtml, /name="description"/)
+  assert.doesNotMatch(emptyBodyHtml, /og:description/)
+  assert.doesNotMatch(emptyBodyHtml, /twitter:description/)
+  assert.doesNotMatch(emptyBodyHtml, /개인 위키/)
+
   const app = createApp()
   const server = await listen(app)
   t.after(() => new Promise((resolve) => server.close(resolve)))

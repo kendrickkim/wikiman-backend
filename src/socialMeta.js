@@ -37,7 +37,7 @@ export function postDescription(content, maxLength = 200) {
     .replace(/[#>*_~`|[\]()-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim())
-  if (!text) return DEFAULT_DESCRIPTION
+  if (!text) return ''
   return text.length > maxLength ? `${text.slice(0, maxLength - 1).trimEnd()}…` : text
 }
 
