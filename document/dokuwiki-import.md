@@ -1,6 +1,6 @@
 # DokuWiki → Wikiman 가져오기
 
-[wiki.love-02.com](http://wiki.love-02.com/) 같은 **DokuWiki** 데이터를 SFTP로 받은 뒤 Wikiman으로 넣습니다.
+기존 **DokuWiki** 데이터를 SFTP 등으로 받은 뒤 Wikiman으로 넣습니다.
 
 ## 1. SFTP로 받기
 
