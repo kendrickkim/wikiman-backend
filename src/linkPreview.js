@@ -1,12 +1,10 @@
 import net from 'node:net'
 import dns from 'node:dns/promises'
+import { db } from './db.js'
+import { getLinkPreviewCacheConfig } from './settings.js'
 
 const FETCH_TIMEOUT_MS = 8000
 const MAX_HTML_BYTES = 512 * 1024
-const CACHE_TTL_MS = 10 * 60 * 1000
-const CACHE_MAX = 200
-
-const cache = new Map()
 
 function decodeHtmlEntities(value) {
   return String(value || '')
@@ -156,21 +154,76 @@ async function readLimitedBody(response) {
   return Buffer.concat(chunks, total)
 }
 
-function cacheGet(key) {
-  const hit = cache.get(key)
-  if (!hit) return null
-  if (Date.now() - hit.at > CACHE_TTL_MS) {
-    cache.delete(key)
-    return null
+function mapCacheRow(row) {
+  if (!row) return null
+  return {
+    url: row.final_url,
+    title: row.title,
+    description: row.description,
+    image: row.image,
+    siteName: row.site_name
   }
-  return hit.value
+}
+
+function cacheGet(key, ttlDays) {
+  const row = db.prepare(`
+    SELECT
+      final_url, title, description, image, site_name,
+      datetime(fetched_at) > datetime('now', ?) AS is_fresh
+    FROM link_preview_cache
+    WHERE url = ?
+  `).get(`-${ttlDays} days`, key)
+  return {
+    value: mapCacheRow(row),
+    fresh: row?.is_fresh === 1
+  }
+}
+
+function extendCacheAfterFailure(key, ttlDays, failureTtlDays) {
+  const offsetDays = failureTtlDays - ttlDays
+  db.prepare(`
+    UPDATE link_preview_cache
+    SET fetched_at = datetime('now', ?)
+    WHERE url = ?
+  `).run(`${offsetDays} days`, key)
 }
 
 function cacheSet(key, value) {
-  cache.set(key, { at: Date.now(), value })
-  if (cache.size > CACHE_MAX) {
-    const oldest = cache.keys().next().value
-    cache.delete(oldest)
+  db.prepare(`
+    INSERT INTO link_preview_cache (url, final_url, title, description, image, site_name, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(url) DO UPDATE SET
+      final_url = excluded.final_url,
+      title = excluded.title,
+      description = excluded.description,
+      image = excluded.image,
+      site_name = excluded.site_name,
+      fetched_at = datetime('now')
+  `).run(
+    key,
+    value.url,
+    value.title,
+    value.description,
+    value.image,
+    value.siteName
+  )
+}
+
+export function getLinkPreviewCacheStats() {
+  const config = getLinkPreviewCacheConfig()
+  const row = db.prepare('SELECT COUNT(*) AS count FROM link_preview_cache').get()
+  return {
+    count: Number(row?.count) || 0,
+    ...config
+  }
+}
+
+export function clearLinkPreviewCache() {
+  const config = getLinkPreviewCacheConfig()
+  const result = db.prepare('DELETE FROM link_preview_cache').run()
+  return {
+    deleted: Number(result.changes) || 0,
+    ...config
   }
 }
 
@@ -181,8 +234,9 @@ export async function fetchLinkPreview(rawUrl) {
   }
 
   const cacheKey = parsed.toString()
-  const cached = cacheGet(cacheKey)
-  if (cached) return cached
+  const { ttlDays, failureTtlDays } = getLinkPreviewCacheConfig()
+  const cached = cacheGet(cacheKey, ttlDays)
+  if (cached.fresh) return cached.value
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
@@ -214,6 +268,10 @@ export async function fetchLinkPreview(rawUrl) {
     cacheSet(cacheKey, preview)
     return preview
   } catch (err) {
+    if (cached.value) {
+      extendCacheAfterFailure(cacheKey, ttlDays, failureTtlDays)
+      return cached.value
+    }
     if (err.status) throw err
     if (err.name === 'AbortError') {
       throw Object.assign(new Error('페이지 응답이 너무 늦습니다.'), { status: 400 })

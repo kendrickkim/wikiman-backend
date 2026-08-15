@@ -1,6 +1,10 @@
 import { Router } from 'express'
-import { requireWriter } from '../middleware/auth.js'
-import { fetchLinkPreview } from '../linkPreview.js'
+import { optionalAuth, requireWriter } from '../middleware/auth.js'
+import {
+  clearLinkPreviewCache,
+  fetchLinkPreview,
+  getLinkPreviewCacheStats
+} from '../linkPreview.js'
 
 const router = Router()
 const RATE_WINDOW_MS = 60 * 1000
@@ -24,7 +28,15 @@ function rateLimited(req) {
   return false
 }
 
-router.get('/', requireWriter, async (req, res) => {
+router.get('/cache', requireWriter, (_req, res) => {
+  res.json(getLinkPreviewCacheStats())
+})
+
+router.delete('/cache', requireWriter, (_req, res) => {
+  res.json(clearLinkPreviewCache())
+})
+
+router.get('/', optionalAuth, async (req, res) => {
   if (rateLimited(req)) {
     return res.status(429).json({ error: '요청이 너무 많습니다. 잠시 후 다시 시도하세요.' })
   }

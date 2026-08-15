@@ -42,6 +42,8 @@ test('schema_version이 정수로 저장된다', () => {
   assert.ok(topMenu)
   const quickPosts = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'quick_posts'").get()
   assert.ok(quickPosts)
+  const linkPreviewCache = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'link_preview_cache'").get()
+  assert.ok(linkPreviewCache)
 })
 
 test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 API는 객체 배열만 반환한다', async (t) => {
@@ -169,9 +171,19 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   const settingsSaved = await json(await fetch(`${base}/api/settings`, {
     method: 'PATCH',
     headers: { ...auth, 'content-type': 'application/json' },
-    body: JSON.stringify({ mobileQuickPostEnabled: true })
+    body: JSON.stringify({
+      mobileQuickPostEnabled: true,
+      quickPostPromoteSourceMode: 'ask',
+      quickPostPromoteEditor: 'ask',
+      linkPreviewCacheTtlDays: 15,
+      linkPreviewFailureTtlDays: 2
+    })
   }))
   assert.equal(settingsSaved.mobileQuickPostEnabled, true)
+  assert.equal(settingsSaved.quickPostPromoteSourceMode, 'ask')
+  assert.equal(settingsSaved.quickPostPromoteEditor, 'ask')
+  assert.equal(settingsSaved.linkPreviewCacheTtlDays, 15)
+  assert.equal(settingsSaved.linkPreviewFailureTtlDays, 2)
 
   const emptyQuick = await fetch(`${base}/api/quick-posts`, {
     method: 'POST',
@@ -209,6 +221,25 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.equal(promoted.post.categoryId, null)
   const gone = db.prepare('SELECT id FROM quick_posts WHERE id = ?').get(quickId)
   assert.equal(gone, undefined)
+
+  const editorQuick = await json(await fetch(`${base}/api/quick-posts`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ content: '첫 문단\n\n둘째 문단' })
+  }))
+  const editorPromoted = await json(await fetch(`${base}/api/quick-posts/${editorQuick.quickPost.id}/promote`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ editorType: 'editorjs', keepSource: true })
+  }))
+  assert.equal(editorPromoted.post.editorType, 'editorjs')
+  assert.equal(JSON.parse(editorPromoted.post.content).blocks.length, 2)
+  assert.equal(editorPromoted.sourceKept, true)
+  assert.ok(db.prepare('SELECT id FROM quick_posts WHERE id = ?').get(editorQuick.quickPost.id))
+  await fetch(`${base}/api/quick-posts/${editorQuick.quickPost.id}`, {
+    method: 'DELETE',
+    headers: auth
+  })
 
   const anotherQuick = await json(await fetch(`${base}/api/quick-posts`, {
     method: 'POST',

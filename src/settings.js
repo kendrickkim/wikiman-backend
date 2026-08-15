@@ -1,6 +1,6 @@
 import { db } from './db.js'
 import path from 'node:path'
-import { normalizeEditorType } from './editors.js'
+import { EDITOR_TYPES, normalizeEditorType } from './editors.js'
 import { getHomePostIds } from './homepage.js'
 import { getTopMenuItems } from './topMenu.js'
 
@@ -8,6 +8,10 @@ const DEFAULT_PLANTUML = 'https://www.plantuml.com/plantuml'
 const DEFAULT_MAX_ATTACHMENT_MB = 20
 const MIN_MAX_ATTACHMENT_MB = 1
 const MAX_MAX_ATTACHMENT_MB = 200
+export const DEFAULT_LINK_PREVIEW_CACHE_TTL_DAYS = 10
+export const DEFAULT_LINK_PREVIEW_FAILURE_TTL_DAYS = 1
+const MIN_LINK_PREVIEW_TTL_DAYS = 1
+const MAX_LINK_PREVIEW_TTL_DAYS = 365
 
 function normalizeFavicon(value, fallback) {
   const raw = String(value ?? '').trim()
@@ -82,6 +86,32 @@ export function normalizeMobileQuickPostEnabled(value, fallback = false) {
   return fallback
 }
 
+const QUICK_POST_PROMOTE_SOURCE_MODES = ['ask', 'delete', 'keep']
+
+export function normalizeQuickPostPromoteSourceMode(value, fallback = 'ask') {
+  const mode = String(value ?? '').trim()
+  if (QUICK_POST_PROMOTE_SOURCE_MODES.includes(mode)) return mode
+  if (fallback === null) return null
+  return fallback
+}
+
+export function normalizeQuickPostPromoteEditor(value, fallback = 'ask') {
+  const mode = String(value ?? '').trim()
+  if (mode === 'ask') return 'ask'
+  if (EDITOR_TYPES.includes(mode)) return mode
+  if (fallback === null) return null
+  return fallback === 'ask' || EDITOR_TYPES.includes(fallback) ? fallback : 'ask'
+}
+
+export function normalizeLinkPreviewTtlDays(value, fallback) {
+  const n = Math.round(Number(value))
+  if (!Number.isFinite(n) || n < MIN_LINK_PREVIEW_TTL_DAYS || n > MAX_LINK_PREVIEW_TTL_DAYS) {
+    if (fallback === null) return null
+    return fallback
+  }
+  return n
+}
+
 function rowMap() {
   const map = {
     site_title: 'Wikiman',
@@ -95,7 +125,11 @@ function rowMap() {
     category_tree_side: 'left',
     font_scale: '100',
     top_menu_visible: '1',
-    mobile_quick_post_enabled: '0'
+    mobile_quick_post_enabled: '0',
+    quick_post_promote_source_mode: 'ask',
+    quick_post_promote_editor: 'ask',
+    link_preview_cache_ttl_days: String(DEFAULT_LINK_PREVIEW_CACHE_TTL_DAYS),
+    link_preview_failure_ttl_days: String(DEFAULT_LINK_PREVIEW_FAILURE_TTL_DAYS)
   }
   for (const row of db.prepare('SELECT key, value FROM settings').all()) {
     map[row.key] = row.value
@@ -109,6 +143,20 @@ export function getMaxAttachmentMb() {
 
 export function getMaxAttachmentBytes() {
   return getMaxAttachmentMb() * 1024 * 1024
+}
+
+export function getLinkPreviewCacheConfig() {
+  const map = rowMap()
+  return {
+    ttlDays: normalizeLinkPreviewTtlDays(
+      map.link_preview_cache_ttl_days,
+      DEFAULT_LINK_PREVIEW_CACHE_TTL_DAYS
+    ),
+    failureTtlDays: normalizeLinkPreviewTtlDays(
+      map.link_preview_failure_ttl_days,
+      DEFAULT_LINK_PREVIEW_FAILURE_TTL_DAYS
+    )
+  }
 }
 
 export function getSettings(user) {
@@ -127,6 +175,22 @@ export function getSettings(user) {
     fontScale: normalizeFontScale(map.font_scale, 100),
     topMenuVisible: normalizeTopMenuVisible(map.top_menu_visible, true),
     mobileQuickPostEnabled: normalizeMobileQuickPostEnabled(map.mobile_quick_post_enabled, false),
+    quickPostPromoteSourceMode: normalizeQuickPostPromoteSourceMode(
+      map.quick_post_promote_source_mode,
+      'ask'
+    ),
+    quickPostPromoteEditor: normalizeQuickPostPromoteEditor(
+      map.quick_post_promote_editor,
+      'ask'
+    ),
+    linkPreviewCacheTtlDays: normalizeLinkPreviewTtlDays(
+      map.link_preview_cache_ttl_days,
+      DEFAULT_LINK_PREVIEW_CACHE_TTL_DAYS
+    ),
+    linkPreviewFailureTtlDays: normalizeLinkPreviewTtlDays(
+      map.link_preview_failure_ttl_days,
+      DEFAULT_LINK_PREVIEW_FAILURE_TTL_DAYS
+    ),
     homePostIds,
     hasHomepage: homePostIds.length > 0,
     topMenuItems: getTopMenuItems(user)
@@ -236,6 +300,38 @@ export function updateSettings(input = {}, user) {
     next.mobileQuickPostEnabled = enabled
   }
 
+  if (input.quickPostPromoteSourceMode != null) {
+    const mode = normalizeQuickPostPromoteSourceMode(input.quickPostPromoteSourceMode, null)
+    if (!mode) {
+      throw Object.assign(new Error('포스트 이동 후 원본 처리는 매번 선택, 삭제 또는 유지로 선택하세요.'), { status: 400 })
+    }
+    next.quickPostPromoteSourceMode = mode
+  }
+
+  if (input.quickPostPromoteEditor != null) {
+    const editor = normalizeQuickPostPromoteEditor(input.quickPostPromoteEditor, null)
+    if (!editor) {
+      throw Object.assign(new Error('포스트 이동 시 에디터는 매번 선택 또는 지원하는 작성 방식이어야 합니다.'), { status: 400 })
+    }
+    next.quickPostPromoteEditor = editor
+  }
+
+  if (input.linkPreviewCacheTtlDays != null) {
+    const days = normalizeLinkPreviewTtlDays(input.linkPreviewCacheTtlDays, null)
+    if (days == null) {
+      throw Object.assign(new Error('링크 캐시 기본 TTL은 1~365일로 입력하세요.'), { status: 400 })
+    }
+    next.linkPreviewCacheTtlDays = days
+  }
+
+  if (input.linkPreviewFailureTtlDays != null) {
+    const days = normalizeLinkPreviewTtlDays(input.linkPreviewFailureTtlDays, null)
+    if (days == null) {
+      throw Object.assign(new Error('링크 조회 실패 TTL은 1~365일로 입력하세요.'), { status: 400 })
+    }
+    next.linkPreviewFailureTtlDays = days
+  }
+
   const tx = db.transaction(() => {
     upsert('site_title', next.siteTitle)
     upsert('theme', next.theme)
@@ -249,6 +345,10 @@ export function updateSettings(input = {}, user) {
     upsert('font_scale', String(next.fontScale))
     upsert('top_menu_visible', next.topMenuVisible ? '1' : '0')
     upsert('mobile_quick_post_enabled', next.mobileQuickPostEnabled ? '1' : '0')
+    upsert('quick_post_promote_source_mode', next.quickPostPromoteSourceMode)
+    upsert('quick_post_promote_editor', next.quickPostPromoteEditor)
+    upsert('link_preview_cache_ttl_days', String(next.linkPreviewCacheTtlDays))
+    upsert('link_preview_failure_ttl_days', String(next.linkPreviewFailureTtlDays))
   })
   tx()
   return getSettings(user)

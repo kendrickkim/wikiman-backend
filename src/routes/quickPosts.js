@@ -4,6 +4,8 @@ import { requireWriter } from '../middleware/auth.js'
 import { sanitizePostContent } from '../sanitize.js'
 import { rewriteContentFileUrls } from '../fileUrls.js'
 import { syncUploadRefs } from '../attachments.js'
+import { normalizeEditorType } from '../editors.js'
+import { getSettings } from '../settings.js'
 
 const router = Router()
 
@@ -38,6 +40,38 @@ function slugify(title) {
     .replace(/^-+|-+$/g, '')
     .slice(0, 60) || 'post'
   return `${base}-${Date.now().toString(36)}`
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function contentForEditor(content, editorType) {
+  if (editorType === 'editorjs') {
+    const blocks = String(content)
+      .split(/\n{2,}/)
+      .map((text) => text.trim())
+      .filter(Boolean)
+      .map((text) => ({
+        type: 'paragraph',
+        data: { text: escapeHtml(text).replace(/\n/g, '<br>') }
+      }))
+    return JSON.stringify({ blocks })
+  }
+  if (editorType === 'ckeditor' || editorType === 'summernote' || editorType === 'html') {
+    return String(content)
+      .split(/\n{2,}/)
+      .map((text) => text.trim())
+      .filter(Boolean)
+      .map((text) => `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`)
+      .join('')
+  }
+  return content
 }
 
 router.get('/', requireWriter, (req, res) => {
@@ -109,55 +143,70 @@ router.post('/:id/promote', requireWriter, (req, res) => {
   if (!content) {
     return res.status(400).json({ error: '내용이 비어 있어 포스트로 옮길 수 없습니다.' })
   }
+  const settings = getSettings(req.user)
+  const editorPref = settings.quickPostPromoteEditor
+  const editorType = editorPref === 'ask'
+    ? normalizeEditorType(req.body?.editorType, 'textarea')
+    : editorPref
+  const sourceMode = settings.quickPostPromoteSourceMode
+  const keepSource = sourceMode === 'keep'
+    || (sourceMode === 'ask' && req.body?.keepSource === true)
 
-  const postId = db.transaction(() => {
-    const sanitized = sanitizePostContent('textarea', content)
-    const slug = slugify('')
-    const inserted = db.prepare(`
-      INSERT INTO posts (title, slug, category_id, author_id, visibility, status, editor_type, content)
-      VALUES (?, ?, NULL, ?, 'public', 'draft', 'textarea', ?)
-    `).run('', slug, req.user.id, sanitized)
-    const id = Number(inserted.lastInsertRowid)
-    const rewritten = rewriteContentFileUrls(sanitized, id)
-    if (rewritten !== sanitized) {
-      db.prepare('UPDATE posts SET content = ? WHERE id = ?').run(rewritten, id)
-    }
-    syncUploadRefs(db, id)
-    db.prepare('DELETE FROM quick_posts WHERE id = ?').run(existing.id)
-    return id
-  })()
+  try {
+    const postId = db.transaction(() => {
+      const sanitized = sanitizePostContent(editorType, contentForEditor(content, editorType))
+      const slug = slugify('')
+      const inserted = db.prepare(`
+        INSERT INTO posts (title, slug, category_id, author_id, visibility, status, editor_type, content)
+        VALUES (?, ?, NULL, ?, 'public', 'draft', ?, ?)
+      `).run('', slug, req.user.id, editorType, sanitized)
+      const id = Number(inserted.lastInsertRowid)
+      const rewritten = rewriteContentFileUrls(sanitized, id)
+      if (rewritten !== sanitized) {
+        db.prepare('UPDATE posts SET content = ? WHERE id = ?').run(rewritten, id)
+      }
+      syncUploadRefs(db, id)
+      if (!keepSource) {
+        db.prepare('DELETE FROM quick_posts WHERE id = ?').run(existing.id)
+      }
+      return id
+    })()
 
-  const row = db.prepare(`
-    SELECT
-      posts.id, posts.title, posts.slug, posts.category_id, posts.author_id,
-      posts.visibility, posts.status, posts.editor_type, posts.content,
-      posts.created_at, posts.updated_at, posts.deleted_at,
-      users.username AS author_name
-    FROM posts
-    JOIN users ON users.id = posts.author_id
-    WHERE posts.id = ?
-  `).get(postId)
+    const row = db.prepare(`
+      SELECT
+        posts.id, posts.title, posts.slug, posts.category_id, posts.author_id,
+        posts.visibility, posts.status, posts.editor_type, posts.content,
+        posts.created_at, posts.updated_at, posts.deleted_at,
+        users.username AS author_name
+      FROM posts
+      JOIN users ON users.id = posts.author_id
+      WHERE posts.id = ?
+    `).get(postId)
 
-  res.status(201).json({
-    post: {
-      id: row.id,
-      title: row.title,
-      slug: row.slug,
-      categoryId: row.category_id,
-      authorId: row.author_id,
-      authorName: row.author_name,
-      visibility: row.visibility,
-      status: row.status,
-      editorType: row.editor_type,
-      content: row.content,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      keywords: [],
-      attachments: [],
-      isHomepage: false,
-      homepageSort: null
-    }
-  })
+    res.status(201).json({
+      sourceKept: keepSource,
+      post: {
+        id: row.id,
+        title: row.title,
+        slug: row.slug,
+        categoryId: row.category_id,
+        authorId: row.author_id,
+        authorName: row.author_name,
+        visibility: row.visibility,
+        status: row.status,
+        editorType: row.editor_type,
+        content: row.content,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        keywords: [],
+        attachments: [],
+        isHomepage: false,
+        homepageSort: null
+      }
+    })
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || '포스트로 옮기지 못했습니다.' })
+  }
 })
 
 export default router

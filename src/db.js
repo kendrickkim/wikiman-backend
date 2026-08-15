@@ -9,7 +9,7 @@ const dataDir = path.resolve(process.env.WIKIMAN_DATA_DIR || path.join(__dirname
 const uploadsDir = path.join(dataDir, 'uploads')
 const dbPath = path.join(dataDir, 'wiki.db')
 
-export const CURRENT_SCHEMA_VERSION = 8
+export const CURRENT_SCHEMA_VERSION = 11
 
 fs.mkdirSync(dataDir, { recursive: true })
 fs.mkdirSync(uploadsDir, { recursive: true })
@@ -237,6 +237,40 @@ function migrateTo(database, version) {
       ON quick_posts(author_id, updated_at DESC);
     `)
   }
+  if (version === 9) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS link_preview_cache (
+        url TEXT PRIMARY KEY,
+        final_url TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        image TEXT NOT NULL DEFAULT '',
+        site_name TEXT NOT NULL DEFAULT '',
+        fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_link_preview_cache_fetched
+      ON link_preview_cache(fetched_at);
+    `)
+  }
+  if (version === 10) {
+    // textarea·tui 추가 이후에도 CHECK 제약이 옛값인 DB를 갱신합니다.
+    recreatePostsTable(database, { withDeletedAt: true })
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_posts_list ON posts(deleted_at, status, visibility, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category_id, deleted_at);
+      CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
+      CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, deleted_at);
+    `)
+  }
+  if (version === 11) {
+    recreatePostsTable(database, { withDeletedAt: true })
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_posts_list ON posts(deleted_at, status, visibility, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category_id, deleted_at);
+      CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
+      CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, deleted_at);
+    `)
+  }
 }
 
 /** url 컬럼·nullable post_id가 없으면 top_menu_items를 재구성합니다. */
@@ -268,6 +302,21 @@ function ensureTopMenuSchema(database) {
   } finally {
     database.pragma('foreign_keys = ON')
   }
+}
+
+/** posts.editor_type CHECK에 textarea·tui가 없으면 테이블을 재구성합니다. */
+function ensurePostsEditorTypeCheck(database) {
+  const row = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'posts'").get()
+  const sql = String(row?.sql || '')
+  if (!sql) return
+  if (sql.includes("'textarea'") && sql.includes("'tui'")) return
+  recreatePostsTable(database, { withDeletedAt: true })
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_posts_list ON posts(deleted_at, status, visibility, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category_id, deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
+    CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, deleted_at);
+  `)
 }
 
 function ensureSchema(database) {
@@ -356,6 +405,10 @@ function ensureSchema(database) {
   seedSetting.run('font_scale', '100')
   seedSetting.run('top_menu_visible', '1')
   seedSetting.run('mobile_quick_post_enabled', '0')
+  seedSetting.run('quick_post_promote_source_mode', 'ask')
+  seedSetting.run('quick_post_promote_editor', 'ask')
+  seedSetting.run('link_preview_cache_ttl_days', '10')
+  seedSetting.run('link_preview_failure_ttl_days', '1')
 
   database.exec(`
   CREATE TABLE IF NOT EXISTS quick_posts (
@@ -367,6 +420,20 @@ function ensureSchema(database) {
   );
   CREATE INDEX IF NOT EXISTS idx_quick_posts_author_updated
   ON quick_posts(author_id, updated_at DESC);
+`)
+
+  database.exec(`
+  CREATE TABLE IF NOT EXISTS link_preview_cache (
+    url TEXT PRIMARY KEY,
+    final_url TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    image TEXT NOT NULL DEFAULT '',
+    site_name TEXT NOT NULL DEFAULT '',
+    fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_link_preview_cache_fetched
+  ON link_preview_cache(fetched_at);
 `)
 
   database.exec(`
@@ -419,8 +486,9 @@ function ensureSchema(database) {
     setSchemaVersion(database, version)
   }
 
-  // 버전만 올라가고 컬럼이 빠진 DB도 복구합니다.
+  // 버전만 올라가고 컬럼·제약이 빠진 DB도 복구합니다.
   ensureTopMenuSchema(database)
+  ensurePostsEditorTypeCheck(database)
 }
 
 export function openDatabase() {
