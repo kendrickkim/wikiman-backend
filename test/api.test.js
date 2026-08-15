@@ -293,6 +293,10 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.equal(settingsSaved.linkPreviewCacheTtlDays, 15)
   assert.equal(settingsSaved.linkPreviewFailureTtlDays, 2)
   assert.equal(settingsSaved.siteLanguage, 'en-US')
+  const englishMeta = socialMetaForPath('/', 'https://wiki.example')
+  assert.equal(englishMeta.lang, 'en-US')
+  assert.equal(englishMeta.locale, 'en_US')
+  assert.equal(englishMeta.description, settingsSaved.siteTitle)
 
   const badSiteLanguage = await fetch(`${base}/api/settings`, {
     method: 'PATCH',
