@@ -151,17 +151,30 @@ export function renderSocialMeta(meta) {
   return `<!-- wikiman:meta:start -->\n    ${tags.join('\n    ')}\n    <!-- wikiman:meta:end -->`
 }
 
+// 빌드가 HTML을 최소화하면 주석이 사라지고 속성 따옴표도 빠지므로 두 형태를 모두 지웁니다.
+const STALE_META_PATTERNS = [
+  /<title\b[^>]*>[\s\S]*?<\/title>/gi,
+  /<meta\b[^>]*\bname\s*=\s*(?:"description"|'description'|description(?=[\s/>]))[^>]*>/gi,
+  /<meta\b[^>]*\b(?:property|name)\s*=\s*(?:"(?:og|twitter|article):[^"]*"|'(?:og|twitter|article):[^']*'|(?:og|twitter|article):[^\s/>]*)[^>]*>/gi,
+  /<link\b[^>]*\brel\s*=\s*(?:"canonical"|'canonical'|canonical(?=[\s/>]))[^>]*>/gi
+]
+
+function stripStaleMeta(head) {
+  return STALE_META_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, ''), head)
+}
+
 export function injectSocialMeta(html, meta) {
   const rendered = renderSocialMeta(meta)
-  const marker = /<!--\s*wikiman:meta:start\s*-->[\s\S]*?<!--\s*wikiman:meta:end\s*-->/i
-  if (marker.test(html)) return html.replace(marker, rendered)
+  const source = String(html)
+  const headEnd = source.search(/<\/head>/i)
+  const head = headEnd >= 0 ? source.slice(0, headEnd) : source
+  const tail = headEnd >= 0 ? source.slice(headEnd) : ''
 
-  // 빌드가 HTML 주석을 제거해도 기존 title/OG/Twitter를 지우고 다시 넣습니다.
-  const cleaned = String(html)
-    .replace(/<title>[\s\S]*?<\/title>/gi, '')
-    .replace(/<meta\s+[^>]*\bname=["']description["'][^>]*>/gi, '')
-    .replace(/<meta\s+[^>]*\b(?:property|name)=["'](?:og:[^"']+|twitter:[^"']+|description)["'][^>]*>/gi, '')
-    .replace(/<link\s+[^>]*\brel=["']canonical["'][^>]*>/gi, '')
-  if (!/<\/head>/i.test(cleaned)) return `${cleaned}\n${rendered}`
-  return cleaned.replace(/<\/head>/i, `    ${rendered}\n  </head>`)
+  const marker = /<!--\s*wikiman:meta:start\s*-->[\s\S]*?<!--\s*wikiman:meta:end\s*-->/i
+  const slot = '<!--wikiman:meta:slot-->'
+  const cleaned = stripStaleMeta(marker.test(head) ? head.replace(marker, slot) : head)
+
+  if (cleaned.includes(slot)) return `${cleaned.replace(slot, rendered)}${tail}`
+  if (headEnd < 0) return `${cleaned}\n${rendered}`
+  return `${cleaned}    ${rendered}\n  ${tail}`
 }

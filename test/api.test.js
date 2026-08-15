@@ -78,6 +78,21 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.match(socialHtml, /property="og:title" content="공유 글"/)
   assert.match(socialHtml, /property="og:image" content="https:\/\/cdn\.example\.com\/cover\.jpg"/)
 
+  const minifiedHtml = injectSocialMeta(
+    '<!DOCTYPE html><html><head><meta charset=utf-8><meta name=description content="개인 위키">'
+      + '<meta property=og:title content=Wikiman><meta property=og:type content=website>'
+      + '<meta name=twitter:title content=Wikiman><link rel=canonical href=/>'
+      + '<meta name=theme-color content=#1b1f24></head><body></body></html>',
+    social
+  )
+  assert.equal(minifiedHtml.match(/og:title/g).length, 1)
+  assert.equal(minifiedHtml.match(/twitter:title/g).length, 1)
+  assert.equal(minifiedHtml.match(/<title>/g).length, 1)
+  assert.equal(minifiedHtml.match(/rel="?canonical"?/g).length, 1)
+  assert.match(minifiedHtml, /property="og:type" content="article"/)
+  assert.doesNotMatch(minifiedHtml, /content=Wikiman/)
+  assert.match(minifiedHtml, /<meta name=theme-color content=#1b1f24>/)
+
   const untitledId = Number(db.prepare(`
     INSERT INTO posts (title, slug, author_id, visibility, status, editor_type, content)
     VALUES ('', 'untitled-social', ?, 'public', 'published', 'markdown', '제목 없는 본문')
