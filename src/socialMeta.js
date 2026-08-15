@@ -105,10 +105,10 @@ export function socialMetaForPath(pathname, origin) {
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(Number(match[1]))
   if (!canReadPost(post, null)) return fallback
 
-  const title = String(post.title || '').trim() || '(제목 없음)'
+  const title = String(post.title || '').trim() || fallback.siteName
   return {
     ...fallback,
-    title: `${title} | ${fallback.siteName}`,
+    title,
     description: postDescription(post.content),
     image: firstPostImage(post, origin),
     type: 'article',
@@ -153,11 +153,15 @@ export function renderSocialMeta(meta) {
 
 export function injectSocialMeta(html, meta) {
   const rendered = renderSocialMeta(meta)
-  const marker = /<!-- wikiman:meta:start -->[\s\S]*?<!-- wikiman:meta:end -->/i
+  const marker = /<!--\s*wikiman:meta:start\s*-->[\s\S]*?<!--\s*wikiman:meta:end\s*-->/i
   if (marker.test(html)) return html.replace(marker, rendered)
 
+  // 빌드가 HTML 주석을 제거해도 기존 title/OG/Twitter를 지우고 다시 넣습니다.
   const cleaned = String(html)
-    .replace(/<title>[\s\S]*?<\/title>/i, '')
-    .replace(/<meta\s+name=["']description["'][^>]*>/i, '')
+    .replace(/<title>[\s\S]*?<\/title>/gi, '')
+    .replace(/<meta\s+[^>]*\bname=["']description["'][^>]*>/gi, '')
+    .replace(/<meta\s+[^>]*\b(?:property|name)=["'](?:og:[^"']+|twitter:[^"']+|description)["'][^>]*>/gi, '')
+    .replace(/<link\s+[^>]*\brel=["']canonical["'][^>]*>/gi, '')
+  if (!/<\/head>/i.test(cleaned)) return `${cleaned}\n${rendered}`
   return cleaned.replace(/<\/head>/i, `    ${rendered}\n  </head>`)
 }

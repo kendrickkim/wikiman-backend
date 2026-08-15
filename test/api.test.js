@@ -67,7 +67,7 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     VALUES ('공유 글', 'social-post', ?, 'public', 'published', 'markdown', ?)
   `).run(userId, '공유할 본문입니다.\n\n![대표 그림](https://cdn.example.com/cover.jpg)').lastInsertRowid)
   const social = socialMetaForPath(`/posts/${socialId}`, 'https://wiki.example')
-  assert.equal(social.title, '공유 글 | Wikiman')
+  assert.equal(social.title, '공유 글')
   assert.equal(social.description, '공유할 본문입니다.')
   assert.equal(social.image, 'https://cdn.example.com/cover.jpg')
   assert.equal(social.url, `https://wiki.example/posts/${socialId}`)
@@ -75,8 +75,16 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     '<html><head><title>기본</title><meta name="description" content="기본"></head><body></body></html>',
     social
   )
-  assert.match(socialHtml, /property="og:title" content="공유 글 \| Wikiman"/)
+  assert.match(socialHtml, /property="og:title" content="공유 글"/)
   assert.match(socialHtml, /property="og:image" content="https:\/\/cdn\.example\.com\/cover\.jpg"/)
+
+  const untitledId = Number(db.prepare(`
+    INSERT INTO posts (title, slug, author_id, visibility, status, editor_type, content)
+    VALUES ('', 'untitled-social', ?, 'public', 'published', 'markdown', '제목 없는 본문')
+  `).run(userId).lastInsertRowid)
+  const untitledSocial = socialMetaForPath(`/posts/${untitledId}`, 'https://wiki.example')
+  assert.equal(untitledSocial.title, 'Wikiman')
+  assert.equal(untitledSocial.description, '제목 없는 본문')
 
   const app = createApp()
   const server = await listen(app)

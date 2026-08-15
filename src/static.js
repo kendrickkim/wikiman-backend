@@ -111,9 +111,10 @@ export function mountFrontend(app) {
     return null
   }
 
+  const indexPath = path.join(frontendDir, 'index.html')
   app.use(serveFrontendHtml(frontendDir))
   app.use(express.static(frontendDir, {
-    index: 'index.html',
+    index: false,
     fallthrough: true,
     setHeaders (res, filePath) {
       if (filePath.endsWith('sw.js') || filePath.endsWith('manifest.json')) {
@@ -124,7 +125,16 @@ export function mountFrontend(app) {
   app.use((req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next()
     if (req.path.startsWith('/api')) return next()
-    return res.sendFile(path.join(frontendDir, 'index.html'))
+    try {
+      const origin = publicOrigin(req)
+      const meta = socialMetaForPath(req.path, origin)
+      const html = injectSocialMeta(fs.readFileSync(indexPath, 'utf8'), meta)
+      res.type('html').setHeader('Cache-Control', 'no-cache')
+      return res.send(html)
+    } catch (err) {
+      console.error(err)
+      return res.sendFile(indexPath)
+    }
   })
   return frontendDir
 }
