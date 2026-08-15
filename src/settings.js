@@ -73,6 +73,15 @@ export function normalizeTopMenuVisible(value, fallback = true) {
   return fallback
 }
 
+export function normalizeMobileQuickPostEnabled(value, fallback = false) {
+  if (value === true || value === false) return value
+  const v = String(value ?? '').trim().toLowerCase()
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false
+  if (fallback === null) return null
+  return fallback
+}
+
 function rowMap() {
   const map = {
     site_title: 'Wikiman',
@@ -85,7 +94,8 @@ function rowMap() {
     category_tree_expand: 'expanded',
     category_tree_side: 'left',
     font_scale: '100',
-    top_menu_visible: '1'
+    top_menu_visible: '1',
+    mobile_quick_post_enabled: '0'
   }
   for (const row of db.prepare('SELECT key, value FROM settings').all()) {
     map[row.key] = row.value
@@ -116,6 +126,7 @@ export function getSettings(user) {
     categoryTreeSide: normalizeCategoryTreeSide(map.category_tree_side, 'left'),
     fontScale: normalizeFontScale(map.font_scale, 100),
     topMenuVisible: normalizeTopMenuVisible(map.top_menu_visible, true),
+    mobileQuickPostEnabled: normalizeMobileQuickPostEnabled(map.mobile_quick_post_enabled, false),
     homePostIds,
     hasHomepage: homePostIds.length > 0,
     topMenuItems: getTopMenuItems(user)
@@ -217,6 +228,14 @@ export function updateSettings(input = {}, user) {
     next.topMenuVisible = visible
   }
 
+  if (input.mobileQuickPostEnabled != null) {
+    const enabled = normalizeMobileQuickPostEnabled(input.mobileQuickPostEnabled, null)
+    if (enabled == null) {
+      throw Object.assign(new Error('모바일 간단 화면 사용 여부는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
+    }
+    next.mobileQuickPostEnabled = enabled
+  }
+
   const tx = db.transaction(() => {
     upsert('site_title', next.siteTitle)
     upsert('theme', next.theme)
@@ -229,6 +248,7 @@ export function updateSettings(input = {}, user) {
     upsert('category_tree_side', next.categoryTreeSide)
     upsert('font_scale', String(next.fontScale))
     upsert('top_menu_visible', next.topMenuVisible ? '1' : '0')
+    upsert('mobile_quick_post_enabled', next.mobileQuickPostEnabled ? '1' : '0')
   })
   tx()
   return getSettings(user)

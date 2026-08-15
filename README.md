@@ -70,8 +70,11 @@ SQLite와 업로드 파일은 `data/`에 있습니다. 서버를 옮길 때 이 
 | `PLANTUML_SERVER` | `https://www.plantuml.com/plantuml` | PlantUML 초기값 (이후 사이트 관리에서 변경 가능) |
 | `ALLOW_REGISTER` | `true` | 회원가입 허용. 작성자가 생기면 이후 가입은 닫힘 |
 | `FRONTEND_DIST` | `public` | 프론트 빌드 폴더 |
+| `PUBLIC_URL` | 요청 주소 | 외부 공개 주소(예: `https://wiki.example.com`). 링크 미리보기의 canonical·이미지 절대 URL에 사용 |
 
 운영에서 `JWT_SECRET`이 없거나 `change-me` / `dev-secret-change-me`이면 서버가 기동을 거부합니다.
+
+백엔드가 호스팅하는 각 SPA URL은 Open Graph/Twitter 메타 정보를 포함합니다. 공개 포스트 URL은 제목·본문 요약과 본문의 첫 이미지(없으면 Wikiman 아이콘)를 사용하며, 비공개·작성중 글의 정보는 노출하지 않습니다.
 
 ## 검사
 

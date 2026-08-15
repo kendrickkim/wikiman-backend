@@ -14,6 +14,7 @@ process.env.NODE_ENV = 'test'
 const dbModule = await import('../src/db.js')
 const { createApp } = await import('../src/app.js')
 const { createBackupFile, inspectBackupFile, restoreBackupFile } = await import('../src/backup.js')
+const { injectSocialMeta, socialMetaForPath } = await import('../src/socialMeta.js')
 const { CURRENT_SCHEMA_VERSION } = dbModule
 let { db } = dbModule
 
@@ -39,6 +40,8 @@ test('schema_version이 정수로 저장된다', () => {
   assert.ok(refs)
   const topMenu = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'top_menu_items'").get()
   assert.ok(topMenu)
+  const quickPosts = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'quick_posts'").get()
+  assert.ok(quickPosts)
 })
 
 test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 API는 객체 배열만 반환한다', async (t) => {
@@ -56,6 +59,22 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     VALUES ('다른글', 'other-post', ?, 'public', 'published', 'html', '<p>안녕<script>alert(1)</script></p>')
   `).run(userId)
   const htmlId = db.prepare("SELECT id FROM posts WHERE slug = 'other-post'").get().id
+
+  const socialId = Number(db.prepare(`
+    INSERT INTO posts (title, slug, author_id, visibility, status, editor_type, content)
+    VALUES ('공유 글', 'social-post', ?, 'public', 'published', 'markdown', ?)
+  `).run(userId, '공유할 본문입니다.\n\n![대표 그림](https://cdn.example.com/cover.jpg)').lastInsertRowid)
+  const social = socialMetaForPath(`/posts/${socialId}`, 'https://wiki.example')
+  assert.equal(social.title, '공유 글 | Wikiman')
+  assert.equal(social.description, '공유할 본문입니다.')
+  assert.equal(social.image, 'https://cdn.example.com/cover.jpg')
+  assert.equal(social.url, `https://wiki.example/posts/${socialId}`)
+  const socialHtml = injectSocialMeta(
+    '<html><head><title>기본</title><meta name="description" content="기본"></head><body></body></html>',
+    social
+  )
+  assert.match(socialHtml, /property="og:title" content="공유 글 \| Wikiman"/)
+  assert.match(socialHtml, /property="og:image" content="https:\/\/cdn\.example\.com\/cover\.jpg"/)
 
   const app = createApp()
   const server = await listen(app)
@@ -146,6 +165,61 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
 
   const trashAnon = await fetch(`${base}/api/posts/trash`)
   assert.equal(trashAnon.status, 401)
+
+  const settingsSaved = await json(await fetch(`${base}/api/settings`, {
+    method: 'PATCH',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ mobileQuickPostEnabled: true })
+  }))
+  assert.equal(settingsSaved.mobileQuickPostEnabled, true)
+
+  const emptyQuick = await fetch(`${base}/api/quick-posts`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ content: '   ' })
+  })
+  assert.equal(emptyQuick.status, 400)
+
+  const createdQuick = await json(await fetch(`${base}/api/quick-posts`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ content: '간단 메모 내용' })
+  }))
+  assert.equal(createdQuick.quickPost.content, '간단 메모 내용')
+  const quickId = createdQuick.quickPost.id
+
+  const quickList = await json(await fetch(`${base}/api/quick-posts`, { headers: auth }))
+  assert.ok(quickList.quickPosts.some((item) => item.id === quickId))
+
+  const patchedQuick = await json(await fetch(`${base}/api/quick-posts/${quickId}`, {
+    method: 'PATCH',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ content: '수정된 간단 메모' })
+  }))
+  assert.equal(patchedQuick.quickPost.content, '수정된 간단 메모')
+
+  const promoted = await json(await fetch(`${base}/api/quick-posts/${quickId}/promote`, {
+    method: 'POST',
+    headers: auth
+  }))
+  assert.equal(promoted.post.status, 'draft')
+  assert.equal(promoted.post.editorType, 'textarea')
+  assert.equal(promoted.post.title, '')
+  assert.equal(promoted.post.content, '수정된 간단 메모')
+  assert.equal(promoted.post.categoryId, null)
+  const gone = db.prepare('SELECT id FROM quick_posts WHERE id = ?').get(quickId)
+  assert.equal(gone, undefined)
+
+  const anotherQuick = await json(await fetch(`${base}/api/quick-posts`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ content: '삭제할 메모' })
+  }))
+  const deleted = await fetch(`${base}/api/quick-posts/${anotherQuick.quickPost.id}`, {
+    method: 'DELETE',
+    headers: auth
+  })
+  assert.equal(deleted.status, 200)
 })
 
 test('비공개 글 파일은 직접 URL로 열 수 없고, 백업 복구는 스트리밍으로 동작한다', async (t) => {
@@ -160,6 +234,9 @@ test('비공개 글 파일은 직접 URL로 열 수 없고, 백업 복구는 스
   const post = db.prepare("SELECT id FROM posts WHERE slug = 'private-file-post'").get()
   db.prepare('UPDATE posts SET content = ? WHERE id = ?').run(`![](/api/posts/${post.id}/files/${stored})`, post.id)
   db.prepare('INSERT INTO upload_refs (post_id, stored_name) VALUES (?, ?)').run(post.id, stored)
+  const privateSocial = socialMetaForPath(`/posts/${post.id}`, 'https://wiki.example')
+  assert.equal(privateSocial.title, 'Wikiman')
+  assert.equal(privateSocial.image, 'https://wiki.example/icons/apple-touch-icon.png')
 
   const app = createApp()
   const server = await listen(app)

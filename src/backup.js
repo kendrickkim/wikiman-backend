@@ -22,7 +22,8 @@ export const REQUIRED_SCHEMA = {
   posts: ['id', 'title', 'slug', 'author_id', 'visibility', 'status', 'editor_type', 'content'],
   settings: ['key', 'value'],
   post_keywords: ['post_id', 'keyword'],
-  post_attachments: ['id', 'post_id', 'stored_name', 'original_name', 'mime_type', 'size']
+  post_attachments: ['id', 'post_id', 'stored_name', 'original_name', 'mime_type', 'size'],
+  quick_posts: ['id', 'author_id', 'content']
 }
 
 function fail(message, status = 400) {

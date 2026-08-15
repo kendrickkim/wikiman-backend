@@ -9,7 +9,7 @@ const dataDir = path.resolve(process.env.WIKIMAN_DATA_DIR || path.join(__dirname
 const uploadsDir = path.join(dataDir, 'uploads')
 const dbPath = path.join(dataDir, 'wiki.db')
 
-export const CURRENT_SCHEMA_VERSION = 7
+export const CURRENT_SCHEMA_VERSION = 8
 
 fs.mkdirSync(dataDir, { recursive: true })
 fs.mkdirSync(uploadsDir, { recursive: true })
@@ -224,6 +224,19 @@ function migrateTo(database, version) {
   if (version === 7) {
     recreatePostsTable(database, { withDeletedAt: true })
   }
+  if (version === 8) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS quick_posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_quick_posts_author_updated
+      ON quick_posts(author_id, updated_at DESC);
+    `)
+  }
 }
 
 /** url 컬럼·nullable post_id가 없으면 top_menu_items를 재구성합니다. */
@@ -342,6 +355,19 @@ function ensureSchema(database) {
   seedSetting.run('category_tree_side', 'left')
   seedSetting.run('font_scale', '100')
   seedSetting.run('top_menu_visible', '1')
+  seedSetting.run('mobile_quick_post_enabled', '0')
+
+  database.exec(`
+  CREATE TABLE IF NOT EXISTS quick_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_quick_posts_author_updated
+  ON quick_posts(author_id, updated_at DESC);
+`)
 
   database.exec(`
   CREATE TABLE IF NOT EXISTS post_keywords (

@@ -6,11 +6,11 @@ Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`)
 
 ## 구조
 
-- `src/routes/` — `/api/auth`, `/posts`, `/categories`, `/uploads`, `/plantuml`, `/settings`, `/backup`
+- `src/routes/` — `/api/auth`, `/posts`, `/quick-posts`, `/categories`, `/uploads`, `/plantuml`, `/link-preview`, `/settings`, `/backup`
 - `src/db.js` — 스키마·시드. WAL. 데이터는 `data/` (git 제외)
 - `src/middleware/auth.js` — JWT, `optionalAuth` / `requireAuth` / `requireWriter`
-- `src/settings.js` — `settings` 키/값. `favicon`은 사이트 아이콘. 홈페이지 글은 `homepage_posts` 테이블. 카테고리 트리 기본 펼침은 `category_tree_expand`(`expanded`|`collapsed`|`root`). 글자 스케일은 `font_scale`(60~120, 기본 100). 기본 에디터는 `default_editor`(데스크톱)·`default_editor_mobile`(모바일).
-- `src/db.js` — 스키마는 정수 `schema_version`(settings). 파일 참조는 `upload_refs`.
+- `src/settings.js` — `settings` 키/값. `favicon`은 사이트 아이콘. 홈페이지 글은 `homepage_posts` 테이블. 카테고리 트리 기본 펼침은 `category_tree_expand`(`expanded`|`collapsed`|`root`). 글자 스케일은 `font_scale`(60~120, 기본 100). 기본 에디터는 `default_editor`(데스크톱)·`default_editor_mobile`(모바일). 모바일 간단 화면은 `mobile_quick_post_enabled`.
+- `src/db.js` — 스키마는 정수 `schema_version`(settings). 파일 참조는 `upload_refs`. 간단 포스트는 `quick_posts`.
 
 에러 응답: `{ error: '한국어 메시지' }`. HTTP 상태 코드를 맞춥니다.
 
@@ -31,10 +31,12 @@ Node.js 22+ · Express 5 · SQLite(`better-sqlite3`) · ESM (`"type": "module"`)
 - 완전 삭제 시 `post_attachments`와 본문(`/api/files/...`)에서 쓰인 업로드 파일을 함께 지웁니다. 다른 글·파비콘이 쓰는 파일은 남깁니다.
 - 홈페이지: `isHomepage`로 여러 글 지정. `homepage_posts`에 순서 저장. `GET /posts/homepage`, 순서 변경 `PUT /posts/homepage/order`. 휴지통으로내면 홈에서 제거.
 - 에디터: `textarea` | `ckeditor`(기본) | `summernote` | `tui` | `editorjs` | `markdown` | `html`. 본문은 문자열. `tui`는 Markdown으로 저장. `textarea`는 일반 텍스트.
+- 간단 포스트: `quick_posts` 별도 테이블. CRUD는 `/api/quick-posts`. `POST /:id/promote`로 제목 없는 미분류·공개·작성중 `textarea` 포스트를 만들고 원본을 삭제한다.
 - 첨부 파일: 글당 여러 개. 파일당 최대 용량은 설정 `max_attachment_mb`(기본 20, 1~200). `post_attachments`. 업로드는 `POST /uploads/files`.
 - 파일 URL: 글에 묶인 파일은 `/api/posts/:id/files/:name`. 미저장 업로드·파비콘은 `/api/files/:name`. 둘 다 글 권한과 같은 접근 검사를 합니다. HTML/SVG는 다운로드 강제.
 - 첨부파일 정리: `GET /uploads/orphans`로 미연결 파일 검사, `POST /uploads/orphans/cleanup`으로 삭제. `upload_refs`·첨부·파비콘 기준.
 - 백업/복구: `.wkmbak` 커스텀 포맷(헤더 매직 `WIKIMNBK` + 형식 버전 + 스키마 메타 + gzip 본문). `GET /backup/download`, `POST /backup/inspect`, `POST /backup/restore`. 복구는 스트리밍·원자 교체. 복구 전 헤더·버전·필수 테이블/컬럼·DB 무결성·외래 키를 검사합니다.
+- 프론트 호스팅 HTML은 URL별 Open Graph/Twitter 메타를 주입합니다. 공개 포스트만 제목·요약·첫 이미지를 노출하며, 이미지가 없으면 Wikiman 아이콘을 사용합니다. 외부 공개 주소는 `PUBLIC_URL`.
 - DokuWiki 가져오기: `npm run import:dokuwiki` (`scripts/import-dokuwiki.mjs`). 실행 시 경로·API·계정을 입력받음. 안내는 `document/dokuwiki-import.md`.
 
 ## 하지 말 것
