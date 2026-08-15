@@ -261,6 +261,7 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.equal(settingsDefaults.blogPostsPerPage, 10)
   assert.equal(settingsDefaults.codeLineNumbers, false)
   assert.equal(settingsDefaults.rightMenuDefaultOpen, true)
+  assert.equal(settingsDefaults.siteLanguage, 'ko-KR')
 
   const settingsSaved = await json(await fetch(`${base}/api/settings`, {
     method: 'PATCH',
@@ -276,7 +277,8 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
       quickPostPromoteSourceMode: 'ask',
       quickPostPromoteEditor: 'ask',
       linkPreviewCacheTtlDays: 15,
-      linkPreviewFailureTtlDays: 2
+      linkPreviewFailureTtlDays: 2,
+      siteLanguage: 'en-US'
     })
   }))
   assert.equal(settingsSaved.mobileQuickPostEnabled, true)
@@ -290,6 +292,15 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.equal(settingsSaved.quickPostPromoteEditor, 'ask')
   assert.equal(settingsSaved.linkPreviewCacheTtlDays, 15)
   assert.equal(settingsSaved.linkPreviewFailureTtlDays, 2)
+  assert.equal(settingsSaved.siteLanguage, 'en-US')
+
+  const badSiteLanguage = await fetch(`${base}/api/settings`, {
+    method: 'PATCH',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ siteLanguage: 'fr-FR' })
+  })
+  assert.equal(badSiteLanguage.status, 400)
+  assert.equal((await json(badSiteLanguage)).error, 'SITE_LANGUAGE_INVALID')
 
   const customBlogPageSize = await json(await fetch(`${base}/api/settings`, {
     method: 'PATCH',
@@ -311,6 +322,11 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     body: JSON.stringify({ content: '   ' })
   })
   assert.equal(emptyQuick.status, 400)
+  assert.equal(
+    (await json(emptyQuick)).error,
+    'QUICK_POST_CONTENT_REQUIRED',
+    '영어 설정에서도 API 오류 코드는 바뀌지 않아야 한다'
+  )
 
   const createdQuick = await json(await fetch(`${base}/api/quick-posts`, {
     method: 'POST',

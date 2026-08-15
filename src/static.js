@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { injectSocialMeta, socialMetaForPath } from './socialMeta.js'
+import { apiError, sendError } from './errors.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -36,7 +37,7 @@ function proxyToApi(apiPort) {
     proxyReq.on('error', (err) => {
       console.error(err)
       if (!res.headersSent) {
-        res.status(502).json({ error: 'API 서버에 연결할 수 없습니다.' })
+        sendError(res, apiError('API_UNREACHABLE', 502))
       } else {
         res.end()
       }
@@ -104,9 +105,7 @@ export function mountFrontend(app) {
   const frontendDir = resolveFrontendDir()
   if (!frontendDir) {
     app.get('/', (_req, res) => {
-      res.status(503).type('text/plain').send(
-        '프론트엔드 빌드가 없습니다.\n프론트 저장소에서 npm run build 한 뒤 dist/pwa 내용을 backend/public 에 복사하세요.'
-      )
+      res.status(503).type('text/plain').send('Frontend is not built.')
     })
     return null
   }

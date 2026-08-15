@@ -1,5 +1,6 @@
 import { db } from './db.js'
 import { canReadPost } from './access.js'
+import { apiError } from './errors.js'
 
 const MAX_MENU_ITEMS = 20
 const MAX_MENU_LABEL_LENGTH = 30
@@ -46,21 +47,18 @@ function isReadableMenuRow(row, user, database) {
 export function normalizeTopMenuUrl(raw) {
   let url = String(raw ?? '').trim()
   if (!url) {
-    throw Object.assign(new Error('URL을 입력하세요.'), { status: 400 })
+    throw apiError('URL_REQUIRED', 400)
   }
   if (url.length > MAX_MENU_URL_LENGTH) {
-    throw Object.assign(
-      new Error(`URL은 ${MAX_MENU_URL_LENGTH}자 이하여야 합니다.`),
-      { status: 400 }
-    )
+    throw apiError('URL_TOO_LONG', 400, { max: MAX_MENU_URL_LENGTH })
   }
   if (/\s/.test(url) || /[\u0000-\u001F\u007F]/.test(url)) {
-    throw Object.assign(new Error('URL에 공백이나 제어 문자를 넣을 수 없습니다.'), { status: 400 })
+    throw apiError('URL_WHITESPACE', 400)
   }
 
   if (url.startsWith('/')) {
     if (url.startsWith('//') || url.includes('\\')) {
-      throw Object.assign(new Error('내부 경로는 /로 시작하는 사이트 경로만 사용할 수 있습니다.'), { status: 400 })
+      throw apiError('INTERNAL_PATH_INVALID', 400)
     }
     return url
   }
@@ -69,23 +67,17 @@ export function normalizeTopMenuUrl(raw) {
     url = `https://${url}`
   }
   if (url.length > MAX_MENU_URL_LENGTH) {
-    throw Object.assign(
-      new Error(`URL은 ${MAX_MENU_URL_LENGTH}자 이하여야 합니다.`),
-      { status: 400 }
-    )
+    throw apiError('URL_TOO_LONG', 400, { max: MAX_MENU_URL_LENGTH })
   }
 
   let parsed
   try {
     parsed = new URL(url)
   } catch {
-    throw Object.assign(
-      new Error('URL은 http(s):// 주소이거나 /로 시작하는 경로여야 합니다.'),
-      { status: 400 }
-    )
+    throw apiError('URL_INVALID', 400)
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw Object.assign(new Error('외부 URL은 http 또는 https만 사용할 수 있습니다.'), { status: 400 })
+    throw apiError('EXTERNAL_URL_INVALID', 400)
   }
   return parsed.toString()
 }
@@ -116,10 +108,10 @@ export function getTopMenuPostOptions(database = db) {
 
 export function replaceTopMenuItems(input, database = db) {
   if (!Array.isArray(input)) {
-    throw Object.assign(new Error('상단 메뉴 항목은 배열이어야 합니다.'), { status: 400 })
+    throw apiError('TOP_MENU_NOT_ARRAY', 400)
   }
   if (input.length > MAX_MENU_ITEMS) {
-    throw Object.assign(new Error(`상단 메뉴는 최대 ${MAX_MENU_ITEMS}개까지 추가할 수 있습니다.`), { status: 400 })
+    throw apiError('TOP_MENU_MAX_ITEMS', 400, { max: MAX_MENU_ITEMS })
   }
 
   const normalized = []
@@ -128,32 +120,29 @@ export function replaceTopMenuItems(input, database = db) {
   for (const item of input) {
     const label = String(item?.label ?? '').trim().replace(/\s+/g, ' ')
     if (!label || label.length > MAX_MENU_LABEL_LENGTH) {
-      throw Object.assign(
-        new Error(`메뉴명은 1~${MAX_MENU_LABEL_LENGTH}자로 입력하세요.`),
-        { status: 400 }
-      )
+      throw apiError('TOP_MENU_LABEL_LENGTH', 400, { max: MAX_MENU_LABEL_LENGTH })
     }
 
     const hasPost = item?.postId != null && item?.postId !== ''
     const hasUrl = item?.url != null && String(item.url).trim() !== ''
     if (hasPost && hasUrl) {
-      throw Object.assign(new Error('글과 URL은 동시에 지정할 수 없습니다.'), { status: 400 })
+      throw apiError('TOP_MENU_POST_AND_URL', 400)
     }
     if (!hasPost && !hasUrl) {
-      throw Object.assign(new Error('연결할 글을 선택하거나 URL을 입력하세요.'), { status: 400 })
+      throw apiError('TOP_MENU_NEED_TARGET', 400)
     }
 
     if (hasPost) {
       const postId = Number(item.postId)
       if (!Number.isInteger(postId) || postId <= 0) {
-        throw Object.assign(new Error('연결할 글을 선택하세요.'), { status: 400 })
+        throw apiError('TOP_MENU_NEED_POST', 400)
       }
       if (postIds.has(postId)) {
-        throw Object.assign(new Error('같은 글은 상단 메뉴에 한 번만 연결할 수 있습니다.'), { status: 400 })
+        throw apiError('TOP_MENU_DUPLICATE_POST', 400)
       }
       const post = database.prepare('SELECT id FROM posts WHERE id = ? AND deleted_at IS NULL').get(postId)
       if (!post) {
-        throw Object.assign(new Error('연결할 글을 찾을 수 없습니다.'), { status: 400 })
+        throw apiError('TOP_MENU_POST_NOT_FOUND', 400)
       }
       postIds.add(postId)
       normalized.push({ label, postId, url: null })
@@ -162,7 +151,7 @@ export function replaceTopMenuItems(input, database = db) {
 
     const url = normalizeTopMenuUrl(item.url)
     if (urls.has(url)) {
-      throw Object.assign(new Error('같은 URL은 상단 메뉴에 한 번만 추가할 수 있습니다.'), { status: 400 })
+      throw apiError('TOP_MENU_DUPLICATE_URL', 400)
     }
     urls.add(url)
     normalized.push({ label, postId: null, url })

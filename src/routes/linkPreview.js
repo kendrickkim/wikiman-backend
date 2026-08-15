@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { optionalAuth, requireWriter } from '../middleware/auth.js'
+import { sendError } from '../errors.js'
 import {
   clearLinkPreviewCache,
   fetchLinkPreview,
@@ -38,13 +39,13 @@ router.delete('/cache', requireWriter, (_req, res) => {
 
 router.get('/', optionalAuth, async (req, res) => {
   if (rateLimited(req)) {
-    return res.status(429).json({ error: '요청이 너무 많습니다. 잠시 후 다시 시도하세요.' })
+    return res.status(429).json({ error: 'RATE_LIMITED' })
   }
   try {
     const preview = await fetchLinkPreview(req.query?.url)
     res.json({ preview })
   } catch (err) {
-    res.status(err.status || 400).json({ error: err.message || '링크 미리보기에 실패했습니다.' })
+    sendError(res, err, 'LINK_PREVIEW_FAILED', 400)
   }
 })
 

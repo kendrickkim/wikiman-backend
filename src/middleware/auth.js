@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken'
 import { db } from '../db.js'
 import { jwtSecret } from '../jwt.js'
+import { apiError, sendError } from '../errors.js'
 
 export { jwtSecret, assertJwtSecret } from '../jwt.js'
 
@@ -82,9 +83,9 @@ export function requireAuth(req, res, next) {
   if (!user) {
     const header = req.headers.authorization
     if (!header?.startsWith('Bearer ') && !parseCookies(req.headers.cookie)[TOKEN_COOKIE]) {
-      return res.status(401).json({ error: '로그인이 필요합니다.' })
+      return sendError(res, apiError('UNAUTHORIZED', 401))
     }
-    return res.status(401).json({ error: '세션이 만료되었습니다. 다시 로그인하세요.' })
+    return sendError(res, apiError('SESSION_EXPIRED', 401))
   }
   req.user = user
   next()
@@ -93,7 +94,7 @@ export function requireAuth(req, res, next) {
 export function requireWriter(req, res, next) {
   requireAuth(req, res, () => {
     if (!isWriter(req.user.id) || req.user.canWrite === false) {
-      return res.status(403).json({ error: '글 작성은 위키 작성자만 할 수 있습니다.' })
+      return sendError(res, apiError('WRITER_ONLY', 403))
     }
     req.user.canWrite = true
     next()

@@ -5,6 +5,7 @@ import { MAX_FILES_PER_REQUEST, deleteOrphanUploads, summarizeOrphanUploads } fr
 import { db, uploadsDir } from '../db.js'
 import { requireWriter } from '../middleware/auth.js'
 import { getMaxAttachmentBytes, getMaxAttachmentMb } from '../settings.js'
+import { apiError, errorPayload, sendError } from '../errors.js'
 
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
 const imageExt = {
@@ -32,9 +33,12 @@ const storage = multer.diskStorage({
 })
 
 function multerError(err, maxMb = getMaxAttachmentMb()) {
-  if (err?.code === 'LIMIT_FILE_SIZE') return `파일 크기는 ${maxMb}MB를 넘을 수 없습니다.`
-  if (err?.code === 'LIMIT_FILE_COUNT') return `한 번에 최대 ${MAX_FILES_PER_REQUEST}개까지 올릴 수 있습니다.`
-  return err?.message || '파일을 올릴 수 없습니다.'
+  if (err?.code === 'LIMIT_FILE_SIZE') return apiError('UPLOAD_TOO_LARGE', 400, { max: maxMb })
+  if (err?.code === 'LIMIT_FILE_COUNT') {
+    return apiError('UPLOAD_TOO_MANY', 400, { max: MAX_FILES_PER_REQUEST })
+  }
+  if (err?.code === 'FAVICON_TYPE_INVALID' || err?.code === 'IMAGE_TYPE_INVALID') return err
+  return apiError('UPLOAD_FAILED', 400)
 }
 
 const faviconTypes = new Set([
@@ -62,7 +66,7 @@ const faviconUpload = multer({
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!isFaviconFile(file)) {
-      cb(new Error('파비콘은 PNG, ICO, SVG, WebP, JPEG만 올릴 수 있습니다.'))
+      cb(apiError('FAVICON_TYPE_INVALID', 400))
       return
     }
     cb(null, true)
@@ -75,7 +79,7 @@ function createImageUpload() {
     limits: { fileSize: getMaxAttachmentBytes() },
     fileFilter: (_req, file, cb) => {
       if (!imageTypes.has(file.mimetype)) {
-        cb(new Error('이미지 파일만 업로드할 수 있습니다.'))
+        cb(apiError('IMAGE_TYPE_INVALID', 400))
         return
       }
       cb(null, true)
@@ -96,10 +100,10 @@ router.post('/', requireWriter, (req, res) => {
   const maxMb = getMaxAttachmentMb()
   createImageUpload().single('image')(req, res, (err) => {
     if (err) {
-      return res.status(400).json({ success: 0, error: multerError(err, maxMb) })
+      return res.status(400).json({ success: 0, ...errorPayload(multerError(err, maxMb), 'UPLOAD_FAILED') })
     }
     if (!req.file) {
-      return res.status(400).json({ success: 0, error: '이미지 파일이 필요합니다.' })
+      return res.status(400).json({ success: 0, error: 'IMAGE_REQUIRED' })
     }
     const url = `/api/files/${req.file.filename}`
     res.status(201).json({
@@ -113,13 +117,13 @@ router.post('/', requireWriter, (req, res) => {
 router.post('/favicon', requireWriter, (req, res) => {
   faviconUpload.single('image')(req, res, (err) => {
     if (err) {
-      const message = err.code === 'LIMIT_FILE_SIZE'
-        ? '파비콘은 2MB를 넘을 수 없습니다.'
+      const error = err.code === 'LIMIT_FILE_SIZE'
+        ? apiError('FAVICON_TOO_LARGE', 400)
         : multerError(err)
-      return res.status(400).json({ error: message })
+      return sendError(res, error, 'UPLOAD_FAILED', 400)
     }
     if (!req.file) {
-      return res.status(400).json({ error: '파비콘 이미지가 필요합니다.' })
+      return res.status(400).json({ error: 'FAVICON_REQUIRED' })
     }
     const url = `/api/files/${req.file.filename}`
     res.status(201).json({ url })
@@ -130,11 +134,11 @@ router.post('/files', requireWriter, (req, res) => {
   const maxMb = getMaxAttachmentMb()
   createFileUpload().array('files', MAX_FILES_PER_REQUEST)(req, res, (err) => {
     if (err) {
-      return res.status(400).json({ error: multerError(err, maxMb) })
+      return sendError(res, multerError(err, maxMb), 'UPLOAD_FAILED', 400)
     }
     const uploaded = req.files || []
     if (!uploaded.length) {
-      return res.status(400).json({ error: '올릴 파일이 필요합니다.' })
+      return res.status(400).json({ error: 'FILES_REQUIRED' })
     }
     res.status(201).json({
       files: uploaded.map((file) => ({

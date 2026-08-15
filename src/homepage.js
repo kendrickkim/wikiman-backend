@@ -1,4 +1,5 @@
 import { db } from './db.js'
+import { apiError } from './errors.js'
 
 export function getHomePostIds(database = db) {
   return database.prepare(`
@@ -68,7 +69,7 @@ export function applyHomepageFlag(postId, isHomepage, sortOrder = null) {
 /** postIds 배열 순서대로 sort_order를 다시 매깁니다. */
 export function setHomepageOrder(postIds) {
   if (!Array.isArray(postIds)) {
-    throw Object.assign(new Error('홈페이지 글 순서 형식이 올바르지 않습니다.'), { status: 400 })
+    throw apiError('HOMEPAGE_ORDER_INVALID', 400)
   }
   const ids = []
   const seen = new Set()
@@ -87,7 +88,7 @@ export function setHomepageOrder(postIds) {
     const foundSet = new Set(found.map((row) => row.id))
     for (const id of ids) {
       if (!foundSet.has(id)) {
-        throw Object.assign(new Error(`홈페이지 글을 찾을 수 없습니다: ${id}`), { status: 400 })
+        throw apiError('HOMEPAGE_POST_NOT_FOUND', 400, { id })
       }
     }
   }

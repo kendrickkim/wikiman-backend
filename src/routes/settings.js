@@ -6,6 +6,7 @@ import {
   getTopMenuPostOptions,
   replaceTopMenuItems
 } from '../topMenu.js'
+import { sendError } from '../errors.js'
 
 const router = Router()
 
@@ -17,7 +18,7 @@ router.patch('/', requireWriter, (req, res) => {
   try {
     res.json(updateSettings(req.body || {}, req.user))
   } catch (err) {
-    res.status(err.status || 400).json({ error: err.message })
+    sendError(res, err, 'SETTINGS_INVALID', 400)
   }
 })
 
@@ -32,7 +33,7 @@ router.put('/top-menu', requireWriter, (req, res) => {
   try {
     res.json({ items: replaceTopMenuItems(req.body?.items) })
   } catch (err) {
-    res.status(err.status || 400).json({ error: err.message })
+    sendError(res, err, 'TOP_MENU_INVALID', 400)
   }
 })
 

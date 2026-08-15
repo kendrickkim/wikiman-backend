@@ -2,6 +2,7 @@ import net from 'node:net'
 import dns from 'node:dns/promises'
 import { db } from './db.js'
 import { getLinkPreviewCacheConfig } from './settings.js'
+import { apiError } from './errors.js'
 
 const FETCH_TIMEOUT_MS = 8000
 const MAX_HTML_BYTES = 512 * 1024
@@ -84,7 +85,7 @@ export function normalizePreviewUrl(raw) {
 async function assertPublicHost(hostname) {
   if (net.isIP(hostname)) {
     if (isPrivateIp(hostname)) {
-      throw Object.assign(new Error('내부 주소는 미리볼 수 없습니다.'), { status: 400 })
+      throw apiError('LINK_PREVIEW_PRIVATE', 400)
     }
     return
   }
@@ -92,10 +93,10 @@ async function assertPublicHost(hostname) {
   try {
     records = await dns.lookup(hostname, { all: true, verbatim: true })
   } catch {
-    throw Object.assign(new Error('주소를 확인할 수 없습니다.'), { status: 400 })
+    throw apiError('LINK_PREVIEW_RESOLVE_FAILED', 400)
   }
   if (!records.length || records.some((row) => isPrivateIp(row.address))) {
-    throw Object.assign(new Error('내부 주소는 미리볼 수 없습니다.'), { status: 400 })
+    throw apiError('LINK_PREVIEW_PRIVATE', 400)
   }
 }
 
@@ -116,25 +117,25 @@ async function fetchPublicPage(initialUrl, signal) {
       const location = response.headers.get('location')
       const next = location ? normalizePreviewUrl(new URL(location, current).toString()) : null
       if (!next) {
-        throw Object.assign(new Error('이동할 페이지 주소가 올바르지 않습니다.'), { status: 400 })
+        throw apiError('LINK_PREVIEW_BAD_REDIRECT', 400)
       }
       current = next
       continue
     }
     return { response, finalUrl: current }
   }
-  throw Object.assign(new Error('페이지 이동 횟수가 너무 많습니다.'), { status: 400 })
+  throw apiError('LINK_PREVIEW_TOO_MANY_REDIRECTS', 400)
 }
 
 async function readLimitedBody(response) {
   const declared = Number(response.headers.get('content-length'))
   if (Number.isFinite(declared) && declared > MAX_HTML_BYTES) {
-    throw Object.assign(new Error('페이지가 너무 큽니다.'), { status: 400 })
+    throw apiError('LINK_PREVIEW_TOO_LARGE', 400)
   }
   if (!response.body?.getReader) {
     const fallback = Buffer.from(await response.arrayBuffer())
     if (fallback.length > MAX_HTML_BYTES) {
-      throw Object.assign(new Error('페이지가 너무 큽니다.'), { status: 400 })
+      throw apiError('LINK_PREVIEW_TOO_LARGE', 400)
     }
     return fallback
   }
@@ -147,7 +148,7 @@ async function readLimitedBody(response) {
     total += value.byteLength
     if (total > MAX_HTML_BYTES) {
       await reader.cancel()
-      throw Object.assign(new Error('페이지가 너무 큽니다.'), { status: 400 })
+      throw apiError('LINK_PREVIEW_TOO_LARGE', 400)
     }
     chunks.push(Buffer.from(value))
   }
@@ -230,7 +231,7 @@ export function clearLinkPreviewCache() {
 export async function fetchLinkPreview(rawUrl) {
   const parsed = normalizePreviewUrl(rawUrl)
   if (!parsed) {
-    throw Object.assign(new Error('미리볼 수 있는 http(s) 주소가 아닙니다.'), { status: 400 })
+    throw apiError('LINK_PREVIEW_NOT_HTTP', 400)
   }
 
   const cacheKey = parsed.toString()
@@ -243,12 +244,12 @@ export async function fetchLinkPreview(rawUrl) {
   try {
     const { response, finalUrl } = await fetchPublicPage(parsed, controller.signal)
     if (!response.ok) {
-      throw Object.assign(new Error('페이지를 가져오지 못했습니다.'), { status: 400 })
+      throw apiError('LINK_PREVIEW_FETCH_FAILED', 400)
     }
 
     const type = String(response.headers.get('content-type') || '').toLowerCase()
     if (!type.includes('text/html') && !type.includes('application/xhtml')) {
-      throw Object.assign(new Error('HTML 페이지가 아닙니다.'), { status: 400 })
+      throw apiError('LINK_PREVIEW_NOT_HTML', 400)
     }
 
     const buf = await readLimitedBody(response)
@@ -274,9 +275,9 @@ export async function fetchLinkPreview(rawUrl) {
     }
     if (err.status) throw err
     if (err.name === 'AbortError') {
-      throw Object.assign(new Error('페이지 응답이 너무 늦습니다.'), { status: 400 })
+      throw apiError('LINK_PREVIEW_TIMEOUT', 400)
     }
-    throw Object.assign(new Error(err.message || '링크 미리보기에 실패했습니다.'), { status: 400 })
+    throw apiError('LINK_PREVIEW_FAILED', 400)
   } finally {
     clearTimeout(timer)
   }

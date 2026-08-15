@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import plantumlEncoder from 'plantuml-encoder'
 import { getSettings } from '../settings.js'
+import { apiError, sendError } from '../errors.js'
 
 const router = Router()
 const MAX_SOURCE_BYTES = 32 * 1024
@@ -37,11 +38,11 @@ async function fetchSvg(url) {
   try {
     const response = await fetch(url, { signal: controller.signal })
     if (!response.ok) {
-      throw new Error('PlantUML 렌더링에 실패했습니다.')
+      throw apiError('PLANTUML_RENDER_FAILED', 502)
     }
     const buf = Buffer.from(await response.arrayBuffer())
     if (buf.length > MAX_SVG_BYTES) {
-      throw new Error('PlantUML 결과가 너무 큽니다.')
+      throw apiError('PLANTUML_RESULT_TOO_LARGE', 502)
     }
     return buf.toString('utf8')
   } finally {
@@ -56,38 +57,38 @@ async function renderSvg(source) {
 
 router.post('/', async (req, res) => {
   if (rateLimited(req)) {
-    return res.status(429).json({ error: 'PlantUML 요청이 너무 많습니다. 잠시 후 다시 시도하세요.' })
+    return res.status(429).json({ error: 'PLANTUML_RATE_LIMITED' })
   }
   const source = String(req.body?.source || req.body?.text || '')
   if (!source.trim()) {
-    return res.status(400).json({ error: 'PlantUML 소스가 필요합니다.' })
+    return res.status(400).json({ error: 'PLANTUML_SOURCE_REQUIRED' })
   }
   if (Buffer.byteLength(source, 'utf8') > MAX_SOURCE_BYTES) {
-    return res.status(400).json({ error: 'PlantUML 소스가 너무 깁니다.' })
+    return res.status(400).json({ error: 'PLANTUML_SOURCE_TOO_LONG' })
   }
   try {
     const svg = await renderSvg(source)
     res.type('image/svg+xml').send(svg)
   } catch (err) {
     const aborted = err?.name === 'AbortError'
-    res.status(502).json({ error: aborted ? 'PlantUML 서버 응답이 지연되었습니다.' : (err.message || 'PlantUML 서버에 연결할 수 없습니다.') })
+    sendError(res, aborted ? apiError('PLANTUML_TIMEOUT', 502) : err, 'PLANTUML_UNREACHABLE', 502)
   }
 })
 
 router.get('/:encoded', async (req, res) => {
   if (rateLimited(req)) {
-    return res.status(429).json({ error: 'PlantUML 요청이 너무 많습니다. 잠시 후 다시 시도하세요.' })
+    return res.status(429).json({ error: 'PLANTUML_RATE_LIMITED' })
   }
   try {
     const encoded = String(req.params.encoded || '')
     if (!encoded || encoded.length > 20000) {
-      return res.status(400).json({ error: 'PlantUML 요청이 올바르지 않습니다.' })
+      return res.status(400).json({ error: 'PLANTUML_REQUEST_INVALID' })
     }
     const svg = await fetchSvg(`${plantumlServer()}/svg/${encoded}`)
     res.type('image/svg+xml').send(svg)
   } catch (err) {
     const aborted = err?.name === 'AbortError'
-    res.status(502).json({ error: aborted ? 'PlantUML 서버 응답이 지연되었습니다.' : 'PlantUML 서버에 연결할 수 없습니다.' })
+    sendError(res, aborted ? apiError('PLANTUML_TIMEOUT', 502) : err, 'PLANTUML_UNREACHABLE', 502)
   }
 })
 

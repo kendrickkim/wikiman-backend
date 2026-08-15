@@ -6,6 +6,7 @@ import { rewriteContentFileUrls } from '../fileUrls.js'
 import { syncUploadRefs } from '../attachments.js'
 import { normalizeEditorType } from '../editors.js'
 import { getSettings } from '../settings.js'
+import { apiError, sendError } from '../errors.js'
 
 const router = Router()
 
@@ -21,7 +22,7 @@ function mapQuickPost(row) {
 function normalizeContent(raw) {
   const content = String(raw ?? '').trim()
   if (!content) {
-    throw Object.assign(new Error('내용을 입력하세요.'), { status: 400 })
+    throw apiError('QUICK_POST_CONTENT_REQUIRED', 400)
   }
   return content
 }
@@ -87,7 +88,7 @@ router.get('/', requireWriter, (req, res) => {
 router.get('/:id', requireWriter, (req, res) => {
   const row = getOwnedQuickPost(req.params.id, req.user.id)
   if (!row) {
-    return res.status(404).json({ error: '간단 포스트를 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'QUICK_POST_NOT_FOUND' })
   }
   res.json({ quickPost: mapQuickPost(row) })
 })
@@ -102,14 +103,14 @@ router.post('/', requireWriter, (req, res) => {
     const row = db.prepare('SELECT * FROM quick_posts WHERE id = ?').get(result.lastInsertRowid)
     res.status(201).json({ quickPost: mapQuickPost(row) })
   } catch (err) {
-    res.status(err.status || 400).json({ error: err.message })
+    sendError(res, err, 'QUICK_POST_INVALID', 400)
   }
 })
 
 router.patch('/:id', requireWriter, (req, res) => {
   const existing = getOwnedQuickPost(req.params.id, req.user.id)
   if (!existing) {
-    return res.status(404).json({ error: '간단 포스트를 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'QUICK_POST_NOT_FOUND' })
   }
   try {
     const content = normalizeContent(req.body?.content)
@@ -121,14 +122,14 @@ router.patch('/:id', requireWriter, (req, res) => {
     const row = db.prepare('SELECT * FROM quick_posts WHERE id = ?').get(existing.id)
     res.json({ quickPost: mapQuickPost(row) })
   } catch (err) {
-    res.status(err.status || 400).json({ error: err.message })
+    sendError(res, err, 'QUICK_POST_INVALID', 400)
   }
 })
 
 router.delete('/:id', requireWriter, (req, res) => {
   const existing = getOwnedQuickPost(req.params.id, req.user.id)
   if (!existing) {
-    return res.status(404).json({ error: '간단 포스트를 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'QUICK_POST_NOT_FOUND' })
   }
   db.prepare('DELETE FROM quick_posts WHERE id = ?').run(existing.id)
   res.json({ ok: true })
@@ -137,11 +138,11 @@ router.delete('/:id', requireWriter, (req, res) => {
 router.post('/:id/promote', requireWriter, (req, res) => {
   const existing = getOwnedQuickPost(req.params.id, req.user.id)
   if (!existing) {
-    return res.status(404).json({ error: '간단 포스트를 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'QUICK_POST_NOT_FOUND' })
   }
   const content = String(existing.content || '').trim()
   if (!content) {
-    return res.status(400).json({ error: '내용이 비어 있어 포스트로 옮길 수 없습니다.' })
+    return res.status(400).json({ error: 'QUICK_POST_EMPTY_PROMOTE' })
   }
   const settings = getSettings(req.user)
   const editorPref = settings.quickPostPromoteEditor
@@ -205,7 +206,7 @@ router.post('/:id/promote', requireWriter, (req, res) => {
       }
     })
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message || '포스트로 옮기지 못했습니다.' })
+    sendError(res, err, 'QUICK_POST_PROMOTE_FAILED', 500)
   }
 })
 

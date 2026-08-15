@@ -3,8 +3,11 @@ import path from 'node:path'
 import { EDITOR_TYPES, normalizeEditorType } from './editors.js'
 import { getHomePostIds } from './homepage.js'
 import { getTopMenuItems } from './topMenu.js'
+import { apiError } from './errors.js'
 
 const DEFAULT_PLANTUML = 'https://www.plantuml.com/plantuml'
+export const SITE_LANGUAGES = ['ko-KR', 'en-US']
+export const DEFAULT_SITE_LANGUAGE = 'ko-KR'
 const DEFAULT_MAX_ATTACHMENT_MB = 20
 const MIN_MAX_ATTACHMENT_MB = 1
 const MAX_MAX_ATTACHMENT_MB = 200
@@ -13,6 +16,15 @@ export const DEFAULT_LINK_PREVIEW_FAILURE_TTL_DAYS = 1
 const MIN_LINK_PREVIEW_TTL_DAYS = 1
 const MAX_LINK_PREVIEW_TTL_DAYS = 365
 
+export function normalizeSiteLanguage(value, fallback = DEFAULT_SITE_LANGUAGE) {
+  const raw = String(value ?? '').trim()
+  if (SITE_LANGUAGES.includes(raw)) return raw
+  if (raw === 'ko' || raw === 'ko_KR') return 'ko-KR'
+  if (raw === 'en' || raw === 'en_US') return 'en-US'
+  if (fallback === null) return null
+  return fallback
+}
+
 function normalizeFavicon(value, fallback) {
   const raw = String(value ?? '').trim()
   if (!raw) return ''
@@ -20,7 +32,7 @@ function normalizeFavicon(value, fallback) {
   const name = match ? path.basename(match[1]) : ''
   if (!name || name !== match[1]) {
     if (fallback === undefined) {
-      throw Object.assign(new Error('파비콘은 업로드한 이미지만 사용할 수 있습니다.'), { status: 400 })
+      throw apiError('FAVICON_UPLOAD_ONLY', 400)
     }
     return fallback
   }
@@ -147,6 +159,7 @@ export function normalizeLinkPreviewTtlDays(value, fallback) {
 function rowMap() {
   const map = {
     site_title: 'Wikiman',
+    site_language: 'ko-KR',
     theme: 'light',
     plantuml_server: DEFAULT_PLANTUML,
     default_editor: 'ckeditor',
@@ -202,6 +215,7 @@ export function getSettings(user) {
   const homePostIds = getHomePostIds()
   return {
     siteTitle: String(map.site_title || 'Wikiman').trim() || 'Wikiman',
+    siteLanguage: normalizeSiteLanguage(map.site_language, 'ko-KR'),
     theme: map.theme === 'dark' ? 'dark' : 'light',
     plantumlServer: String(map.plantuml_server || DEFAULT_PLANTUML).replace(/\/$/, ''),
     defaultEditor: normalizeEditorType(map.default_editor),
@@ -255,14 +269,14 @@ export function updateSettings(input = {}, user) {
   if (input.siteTitle != null) {
     const title = String(input.siteTitle).trim()
     if (!title || title.length > 80) {
-      throw Object.assign(new Error('사이트 제목은 1~80자로 입력하세요.'), { status: 400 })
+      throw apiError('SITE_TITLE_LENGTH', 400)
     }
     next.siteTitle = title
   }
 
   if (input.theme != null) {
     if (input.theme !== 'light' && input.theme !== 'dark') {
-      throw Object.assign(new Error('테마는 밝은 또는 어두운만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('THEME_INVALID', 400)
     }
     next.theme = input.theme
   }
@@ -270,7 +284,7 @@ export function updateSettings(input = {}, user) {
   if (input.plantumlServer != null) {
     const url = String(input.plantumlServer).trim().replace(/\/$/, '')
     if (!/^https?:\/\/[^\s]+$/i.test(url)) {
-      throw Object.assign(new Error('PlantUML 서버 주소는 http(s) URL이어야 합니다.'), { status: 400 })
+      throw apiError('PLANTUML_URL_INVALID', 400)
     }
     next.plantumlServer = url
   }
@@ -278,14 +292,14 @@ export function updateSettings(input = {}, user) {
   if (input.defaultEditor != null) {
     next.defaultEditor = normalizeEditorType(input.defaultEditor, null)
     if (!next.defaultEditor) {
-      throw Object.assign(new Error('데스크톱 기본 작성 방식을 올바르게 선택하세요.'), { status: 400 })
+      throw apiError('DEFAULT_EDITOR_INVALID', 400)
     }
   }
 
   if (input.defaultEditorMobile != null) {
     next.defaultEditorMobile = normalizeEditorType(input.defaultEditorMobile, null)
     if (!next.defaultEditorMobile) {
-      throw Object.assign(new Error('모바일 기본 작성 방식을 올바르게 선택하세요.'), { status: 400 })
+      throw apiError('DEFAULT_EDITOR_MOBILE_INVALID', 400)
     }
   }
 
@@ -296,10 +310,7 @@ export function updateSettings(input = {}, user) {
   if (input.maxAttachmentMb != null) {
     const mb = normalizeMaxAttachmentMb(input.maxAttachmentMb, null)
     if (mb == null) {
-      throw Object.assign(
-        new Error(`첨부 파일 최대 용량은 ${MIN_MAX_ATTACHMENT_MB}~${MAX_MAX_ATTACHMENT_MB}MB로 입력하세요.`),
-        { status: 400 }
-      )
+      throw apiError('MAX_ATTACHMENT_MB_INVALID', 400)
     }
     next.maxAttachmentMb = mb
   }
@@ -307,7 +318,7 @@ export function updateSettings(input = {}, user) {
   if (input.categoryTreeExpand != null) {
     const mode = normalizeCategoryTreeExpand(input.categoryTreeExpand, null)
     if (!mode) {
-      throw Object.assign(new Error('카테고리 트리는 모두 펼침, 모두 접힘, 1단계만 펼침만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('CATEGORY_TREE_EXPAND_INVALID', 400)
     }
     next.categoryTreeExpand = mode
   }
@@ -315,7 +326,7 @@ export function updateSettings(input = {}, user) {
   if (input.categoryTreeSide != null) {
     const side = normalizeCategoryTreeSide(input.categoryTreeSide, null)
     if (!side) {
-      throw Object.assign(new Error('카테고리 트리 위치는 왼쪽 또는 오른쪽만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('CATEGORY_TREE_SIDE_INVALID', 400)
     }
     next.categoryTreeSide = side
   }
@@ -323,7 +334,7 @@ export function updateSettings(input = {}, user) {
   if (input.rightMenuDefaultOpen != null) {
     const open = normalizeRightMenuDefaultOpen(input.rightMenuDefaultOpen, null)
     if (open == null) {
-      throw Object.assign(new Error('오른쪽 메뉴 기본 표시는 보이기 또는 숨기기만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('RIGHT_MENU_DEFAULT_OPEN_INVALID', 400)
     }
     next.rightMenuDefaultOpen = open
   }
@@ -331,7 +342,7 @@ export function updateSettings(input = {}, user) {
   if (input.fontScale != null) {
     const scale = normalizeFontScale(input.fontScale, null)
     if (scale == null) {
-      throw Object.assign(new Error('글자 스케일은 60~120%로 입력하세요.'), { status: 400 })
+      throw apiError('FONT_SCALE_INVALID', 400)
     }
     next.fontScale = scale
   }
@@ -339,7 +350,7 @@ export function updateSettings(input = {}, user) {
   if (input.topMenuVisible != null) {
     const visible = normalizeTopMenuVisible(input.topMenuVisible, null)
     if (visible == null) {
-      throw Object.assign(new Error('상단 메뉴 표시 여부는 보이기 또는 숨기기만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('TOP_MENU_VISIBLE_INVALID', 400)
     }
     next.topMenuVisible = visible
   }
@@ -347,7 +358,7 @@ export function updateSettings(input = {}, user) {
   if (input.mobileQuickPostEnabled != null) {
     const enabled = normalizeMobileQuickPostEnabled(input.mobileQuickPostEnabled, null)
     if (enabled == null) {
-      throw Object.assign(new Error('모바일 간단 화면 사용 여부는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('MOBILE_QUICK_POST_INVALID', 400)
     }
     next.mobileQuickPostEnabled = enabled
   }
@@ -355,7 +366,7 @@ export function updateSettings(input = {}, user) {
   if (input.blogMode != null) {
     const enabled = normalizeBlogMode(input.blogMode, null)
     if (enabled == null) {
-      throw Object.assign(new Error('블로그 모드는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('BLOG_MODE_INVALID', 400)
     }
     next.blogMode = enabled
   }
@@ -363,7 +374,7 @@ export function updateSettings(input = {}, user) {
   if (input.blogShowHomepage != null) {
     const enabled = normalizeBlogShowHomepage(input.blogShowHomepage, null)
     if (enabled == null) {
-      throw Object.assign(new Error('홈페이지로 설정한 글 표시는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('BLOG_SHOW_HOMEPAGE_INVALID', 400)
     }
     next.blogShowHomepage = enabled
   }
@@ -371,15 +382,23 @@ export function updateSettings(input = {}, user) {
   if (input.blogPostsPerPage != null) {
     const size = normalizeBlogPostsPerPage(input.blogPostsPerPage, null)
     if (size == null) {
-      throw Object.assign(new Error('블로그 한 페이지 글 수는 1~100개로 입력하세요.'), { status: 400 })
+      throw apiError('BLOG_POSTS_PER_PAGE_INVALID', 400)
     }
     next.blogPostsPerPage = size
+  }
+
+  if (input.siteLanguage != null) {
+    const language = normalizeSiteLanguage(input.siteLanguage, null)
+    if (!language) {
+      throw apiError('SITE_LANGUAGE_INVALID', 400)
+    }
+    next.siteLanguage = language
   }
 
   if (input.codeLineNumbers != null) {
     const enabled = normalizeCodeLineNumbers(input.codeLineNumbers, null)
     if (enabled == null) {
-      throw Object.assign(new Error('코드 라인 번호 표시는 켜기 또는 끄기만 선택할 수 있습니다.'), { status: 400 })
+      throw apiError('CODE_LINE_NUMBERS_INVALID', 400)
     }
     next.codeLineNumbers = enabled
   }
@@ -387,14 +406,14 @@ export function updateSettings(input = {}, user) {
   if (input.quickPostEditor != null) {
     next.quickPostEditor = normalizeQuickPostEditor(input.quickPostEditor, null)
     if (!next.quickPostEditor) {
-      throw Object.assign(new Error('간단 포스트 작성 방식을 올바르게 선택하세요.'), { status: 400 })
+      throw apiError('QUICK_POST_EDITOR_INVALID', 400)
     }
   }
 
   if (input.quickPostPromoteSourceMode != null) {
     const mode = normalizeQuickPostPromoteSourceMode(input.quickPostPromoteSourceMode, null)
     if (!mode) {
-      throw Object.assign(new Error('포스트 이동 후 원본 처리는 매번 선택, 삭제 또는 유지로 선택하세요.'), { status: 400 })
+      throw apiError('QUICK_POST_PROMOTE_SOURCE_INVALID', 400)
     }
     next.quickPostPromoteSourceMode = mode
   }
@@ -402,7 +421,7 @@ export function updateSettings(input = {}, user) {
   if (input.quickPostPromoteEditor != null) {
     const editor = normalizeQuickPostPromoteEditor(input.quickPostPromoteEditor, null)
     if (!editor) {
-      throw Object.assign(new Error('포스트 이동 시 에디터는 매번 선택 또는 지원하는 작성 방식이어야 합니다.'), { status: 400 })
+      throw apiError('QUICK_POST_PROMOTE_EDITOR_INVALID', 400)
     }
     next.quickPostPromoteEditor = editor
   }
@@ -410,7 +429,7 @@ export function updateSettings(input = {}, user) {
   if (input.linkPreviewCacheTtlDays != null) {
     const days = normalizeLinkPreviewTtlDays(input.linkPreviewCacheTtlDays, null)
     if (days == null) {
-      throw Object.assign(new Error('링크 캐시 기본 TTL은 1~365일로 입력하세요.'), { status: 400 })
+      throw apiError('LINK_PREVIEW_CACHE_TTL_INVALID', 400)
     }
     next.linkPreviewCacheTtlDays = days
   }
@@ -418,13 +437,14 @@ export function updateSettings(input = {}, user) {
   if (input.linkPreviewFailureTtlDays != null) {
     const days = normalizeLinkPreviewTtlDays(input.linkPreviewFailureTtlDays, null)
     if (days == null) {
-      throw Object.assign(new Error('링크 조회 실패 TTL은 1~365일로 입력하세요.'), { status: 400 })
+      throw apiError('LINK_PREVIEW_FAILURE_TTL_INVALID', 400)
     }
     next.linkPreviewFailureTtlDays = days
   }
 
   const tx = db.transaction(() => {
     upsert('site_title', next.siteTitle)
+    upsert('site_language', next.siteLanguage)
     upsert('theme', next.theme)
     upsert('plantuml_server', next.plantumlServer)
     upsert('default_editor', next.defaultEditor)

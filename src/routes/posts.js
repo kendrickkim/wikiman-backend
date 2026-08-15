@@ -24,6 +24,7 @@ import { canReadPost, visibilityFilter } from '../access.js'
 import { rewriteContentFileUrls } from '../fileUrls.js'
 import { sanitizePostContent } from '../sanitize.js'
 import { canAccessStoredFile, resolveUploadPath, sendUploadFile } from '../files.js'
+import { sendError } from '../errors.js'
 
 const router = Router()
 
@@ -354,7 +355,7 @@ router.put('/homepage/order', requireWriter, (req, res) => {
     const ids = setHomepageOrder(req.body?.postIds || req.body?.homePostIds || [])
     res.json({ homePostIds: ids, hasHomepage: ids.length > 0 })
   } catch (err) {
-    res.status(err.status || 400).json({ error: err.message })
+    sendError(res, err, 'HOMEPAGE_ORDER_INVALID', 400)
   }
 })
 
@@ -385,7 +386,7 @@ router.delete('/trash', requireWriter, (req, res) => {
 router.post('/:id/restore', requireWriter, (req, res) => {
   const existing = statements().getPost.get(req.params.id)
   if (!existing || !existing.deleted_at) {
-    return res.status(404).json({ error: '휴지통에서 글을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'POST_NOT_IN_TRASH' })
   }
   db.prepare("UPDATE posts SET deleted_at = NULL, updated_at = datetime('now') WHERE id = ?").run(existing.id)
   const row = db.prepare(`
@@ -398,7 +399,7 @@ router.post('/:id/restore', requireWriter, (req, res) => {
 router.delete('/:id/permanent', requireWriter, (req, res) => {
   const existing = statements().getPost.get(req.params.id)
   if (!existing || !existing.deleted_at) {
-    return res.status(404).json({ error: '휴지통에서 글을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'POST_NOT_IN_TRASH' })
   }
   let pendingUnlink = []
   db.transaction(() => {
@@ -412,11 +413,11 @@ router.delete('/:id/permanent', requireWriter, (req, res) => {
 router.get('/:id/files/:name', (req, res) => {
   const storedName = path.basename(req.params.name)
   if (!canAccessStoredFile(storedName, req.user, { postId: Number(req.params.id) })) {
-    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'FILE_NOT_FOUND' })
   }
   const filePath = resolveUploadPath(storedName)
   if (!filePath) {
-    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'FILE_NOT_FOUND' })
   }
   sendUploadFile(res, filePath)
 })
@@ -428,7 +429,7 @@ router.get('/:id', (req, res) => {
   `).get(req.params.id)
 
   if (!canReadPost(row, req.user)) {
-    return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'POST_NOT_FOUND' })
   }
 
   res.json({ post: withKeywords([row], { includeContent: true })[0] })
@@ -437,17 +438,17 @@ router.get('/:id', (req, res) => {
 router.get('/:id/attachments/:attachmentId', (req, res) => {
   const post = statements().getPost.get(req.params.id)
   if (!canReadPost(post, req.user)) {
-    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'FILE_NOT_FOUND' })
   }
   const row = db.prepare(`
     SELECT * FROM post_attachments WHERE id = ? AND post_id = ?
   `).get(req.params.attachmentId, req.params.id)
   if (!row) {
-    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'FILE_NOT_FOUND' })
   }
   const filePath = path.join(uploadsDir, path.basename(row.stored_name))
   if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: '파일을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'FILE_NOT_FOUND' })
   }
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.download(filePath, row.original_name)
@@ -465,7 +466,7 @@ router.post('/', requireWriter, (req, res) => {
   if (categoryId != null) {
     const category = statements().getCategory.get(categoryId)
     if (!category) {
-      return res.status(400).json({ error: '카테고리를 찾을 수 없습니다.' })
+      return res.status(400).json({ error: 'CATEGORY_NOT_FOUND' })
     }
   }
 
@@ -503,7 +504,7 @@ router.post('/', requireWriter, (req, res) => {
 router.patch('/:id', requireWriter, (req, res) => {
   const existing = statements().getPost.get(req.params.id)
   if (!existing || existing.deleted_at) {
-    return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'POST_NOT_FOUND' })
   }
 
   const title = req.body?.title != null ? String(req.body.title).trim() : existing.title
@@ -516,7 +517,7 @@ router.patch('/:id', requireWriter, (req, res) => {
   if (categoryId != null) {
     const category = statements().getCategory.get(categoryId)
     if (!category) {
-      return res.status(400).json({ error: '카테고리를 찾을 수 없습니다.' })
+      return res.status(400).json({ error: 'CATEGORY_NOT_FOUND' })
     }
   }
 
@@ -571,7 +572,7 @@ router.patch('/:id', requireWriter, (req, res) => {
 router.delete('/:id', requireWriter, (req, res) => {
   const existing = statements().getPost.get(req.params.id)
   if (!existing || existing.deleted_at) {
-    return res.status(404).json({ error: '글을 찾을 수 없습니다.' })
+    return res.status(404).json({ error: 'POST_NOT_FOUND' })
   }
   db.transaction(() => {
     db.prepare("UPDATE posts SET deleted_at = datetime('now') WHERE id = ?").run(existing.id)

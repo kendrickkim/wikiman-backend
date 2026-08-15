@@ -2,7 +2,6 @@ import { db } from './db.js'
 import { canReadPost } from './access.js'
 import { getSettings } from './settings.js'
 
-const DEFAULT_DESCRIPTION = '개인 위키'
 const DEFAULT_ICON = '/icons/apple-touch-icon.png'
 
 function absoluteUrl(origin, value) {
@@ -86,13 +85,16 @@ export function firstPostImage(post, origin) {
 function siteMeta(origin, canonicalUrl) {
   const settings = getSettings()
   const siteTitle = settings.siteTitle || 'Wikiman'
+  const lang = settings.siteLanguage === 'en-US' ? 'en-US' : 'ko-KR'
   return {
     title: siteTitle,
-    description: DEFAULT_DESCRIPTION,
+    description: siteTitle,
     image: absoluteUrl(origin, DEFAULT_ICON),
     url: canonicalUrl,
     type: 'website',
-    siteName: siteTitle
+    siteName: siteTitle,
+    locale: lang === 'en-US' ? 'en_US' : 'ko_KR',
+    lang
   }
 }
 
@@ -140,6 +142,7 @@ export function renderSocialMeta(meta) {
     metaTag('property', 'og:url', meta.url),
     metaTag('property', 'og:image', meta.image),
     metaTag('property', 'og:site_name', meta.siteName),
+    metaTag('property', 'og:locale', meta.locale),
     metaTag('name', 'twitter:card', 'summary_large_image'),
     metaTag('name', 'twitter:title', meta.title),
     metaTag('name', 'twitter:description', meta.description),
@@ -165,7 +168,14 @@ function stripStaleMeta(head) {
 
 export function injectSocialMeta(html, meta) {
   const rendered = renderSocialMeta(meta)
-  const source = String(html)
+  const source = String(html).replace(/<html\b([^>]*)>/i, (tag, attributes) => {
+    const lang = escapeHtml(meta.lang)
+    if (!lang) return tag
+    const nextAttributes = /\blang\s*=/i.test(attributes)
+      ? attributes.replace(/\blang\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/i, `lang="${lang}"`)
+      : `${attributes} lang="${lang}"`
+    return `<html${nextAttributes}>`
+  })
   const headEnd = source.search(/<\/head>/i)
   const head = headEnd >= 0 ? source.slice(0, headEnd) : source
   const tail = headEnd >= 0 ? source.slice(headEnd) : ''

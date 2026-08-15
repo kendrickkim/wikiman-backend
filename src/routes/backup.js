@@ -13,6 +13,7 @@ import {
   restoreBackupFile
 } from '../backup.js'
 import { getSettings } from '../settings.js'
+import { apiError, sendError } from '../errors.js'
 
 const router = Router()
 
@@ -22,7 +23,7 @@ const upload = multer({
   fileFilter: (_req, file, cb) => {
     const name = String(file.originalname || '').toLowerCase()
     if (!name.endsWith(BACKUP_EXTENSION)) {
-      cb(new Error(`백업 파일은 ${BACKUP_EXTENSION} 확장자만 올릴 수 있습니다.`))
+      cb(apiError('BACKUP_EXTENSION_ONLY', 400, { extension: BACKUP_EXTENSION }))
       return
     }
     cb(null, true)
@@ -40,12 +41,13 @@ function cleanup(filePath) {
   }
 }
 
-function restoreErrorMessage(err) {
+function restoreError(err) {
   const raw = String(err?.message || '')
   if (/malformed|not a database|disk i\/o error/i.test(raw)) {
-    return '데이터베이스 파일이 손상되어 있습니다. 백업을 다시 만든 뒤 복구해 주세요.'
+    return apiError('BACKUP_DATABASE_CORRUPT', err?.status || 400)
   }
-  return err?.message || '복구에 실패했습니다.'
+  if (err?.code && /^[A-Z][A-Z0-9_]*$/.test(err.code)) return err
+  return apiError('BACKUP_RESTORE_FAILED', err?.status || 400)
 }
 
 function stampName() {
@@ -63,29 +65,29 @@ router.get('/download', requireWriter, async (_req, res) => {
       cleanup(outPath)
       if (err && !res.headersSent) {
         console.error(err)
-        res.status(500).json({ error: '백업 파일을 내려받지 못했습니다.' })
+        sendError(res, apiError('BACKUP_DOWNLOAD_FAILED', 500), 'BACKUP_DOWNLOAD_FAILED', 500)
       }
     })
   } catch (err) {
     cleanup(outPath)
-    res.status(err.status || 500).json({ error: err.message || '백업에 실패했습니다.' })
+    sendError(res, err, 'BACKUP_FAILED', 500)
   }
 })
 
 router.post('/inspect', requireWriter, (req, res) => {
   upload.single('backup')(req, res, async (err) => {
     if (err) {
-      return res.status(400).json({ error: err.message || '백업 파일을 올릴 수 없습니다.' })
+      return sendError(res, err, 'BACKUP_UPLOAD_FAILED', 400)
     }
     const filePath = req.file?.path
     if (!filePath) {
-      return res.status(400).json({ error: '백업 파일이 필요합니다.' })
+      return sendError(res, apiError('BACKUP_FILE_REQUIRED', 400), 'BACKUP_FILE_REQUIRED', 400)
     }
     try {
       const info = await inspectBackupFile(filePath)
       res.json(info)
     } catch (e) {
-      res.status(e.status || 400).json({ error: e.message || '백업 파일을 확인할 수 없습니다.' })
+      sendError(res, e, 'BACKUP_INSPECT_FAILED', 400)
     } finally {
       cleanup(filePath)
     }
@@ -95,11 +97,11 @@ router.post('/inspect', requireWriter, (req, res) => {
 router.post('/restore', requireWriter, (req, res) => {
   upload.single('backup')(req, res, async (err) => {
     if (err) {
-      return res.status(400).json({ error: err.message || '백업 파일을 올릴 수 없습니다.' })
+      return sendError(res, err, 'BACKUP_UPLOAD_FAILED', 400)
     }
     const filePath = req.file?.path
     if (!filePath) {
-      return res.status(400).json({ error: '백업 파일이 필요합니다.' })
+      return sendError(res, apiError('BACKUP_FILE_REQUIRED', 400), 'BACKUP_FILE_REQUIRED', 400)
     }
     try {
       // 복구 전 구조 재확인
@@ -113,10 +115,7 @@ router.post('/restore', requireWriter, (req, res) => {
           reopenDatabase()
         } catch (reopenErr) {
           console.error(reopenErr)
-          throw Object.assign(
-            new Error(`복구 후 데이터베이스를 열 수 없습니다: ${restoreErrorMessage(reopenErr)}`),
-            { status: 500 }
-          )
+          throw apiError('BACKUP_REOPEN_FAILED', 500)
         }
         res.json({
           ...result,
@@ -133,7 +132,7 @@ router.post('/restore', requireWriter, (req, res) => {
         endMaintenance()
       }
     } catch (e) {
-      res.status(e.status || 400).json({ error: restoreErrorMessage(e) })
+      sendError(res, restoreError(e), 'BACKUP_RESTORE_FAILED', 400)
     } finally {
       cleanup(filePath)
     }

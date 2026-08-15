@@ -12,6 +12,7 @@ import plantumlRoutes from './routes/plantuml.js'
 import settingsRoutes from './routes/settings.js'
 import backupRoutes from './routes/backup.js'
 import linkPreviewRoutes from './routes/linkPreview.js'
+import { apiError, sendError } from './errors.js'
 
 export function createApp() {
   const app = express()
@@ -26,7 +27,7 @@ export function createApp() {
       && !req.path.startsWith('/api/backup')
       && req.path !== '/api/health'
     ) {
-      return res.status(503).json({ error: '지금은 데이터를 복구하는 중입니다.' })
+      return sendError(res, apiError('MAINTENANCE', 503))
     }
     next()
   })
@@ -48,12 +49,12 @@ export function createApp() {
   })
 
   app.use('/api', (_req, res) => {
-    res.status(404).json({ error: 'API를 찾을 수 없습니다.' })
+    sendError(res, apiError('API_NOT_FOUND', 404))
   })
 
   app.use((err, _req, res, _next) => {
     console.error(err)
-    res.status(500).json({ error: '서버 오류가 발생했습니다.' })
+    sendError(res, err)
   })
 
   return app

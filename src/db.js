@@ -389,6 +389,7 @@ function ensureSchema(database) {
 
   const seedSetting = database.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   seedSetting.run('site_title', 'Wikiman')
+  seedSetting.run('site_language', 'ko-KR')
   seedSetting.run('theme', 'light')
   seedSetting.run(
     'plantuml_server',
