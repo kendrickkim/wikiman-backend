@@ -411,7 +411,7 @@ function ensureSchema(database) {
   seedSetting.run('blog_show_homepage', '0')
   seedSetting.run('blog_posts_per_page', '10')
   seedSetting.run('code_line_numbers', '0')
-  seedSetting.run('quick_post_editor', 'textarea')
+  seedSetting.run('quick_post_editor', 'tui')
   seedSetting.run('quick_post_promote_source_mode', 'ask')
   seedSetting.run('quick_post_promote_editor', 'ask')
   seedSetting.run('link_preview_cache_ttl_days', '10')

@@ -143,7 +143,7 @@ export function normalizeQuickPostPromoteEditor(value, fallback = 'ask') {
   return fallback === 'ask' || EDITOR_TYPES.includes(fallback) ? fallback : 'ask'
 }
 
-export function normalizeQuickPostEditor(value, fallback = 'textarea') {
+export function normalizeQuickPostEditor(value, fallback = 'tui') {
   return normalizeEditorType(value, fallback)
 }
 
@@ -176,7 +176,7 @@ function rowMap() {
     blog_show_homepage: '0',
     blog_posts_per_page: '10',
     code_line_numbers: '0',
-    quick_post_editor: 'textarea',
+    quick_post_editor: 'tui',
     quick_post_promote_source_mode: 'ask',
     quick_post_promote_editor: 'ask',
     link_preview_cache_ttl_days: String(DEFAULT_LINK_PREVIEW_CACHE_TTL_DAYS),
@@ -232,7 +232,7 @@ export function getSettings(user) {
     blogShowHomepage: normalizeBlogShowHomepage(map.blog_show_homepage, false),
     blogPostsPerPage: normalizeBlogPostsPerPage(map.blog_posts_per_page, 10),
     codeLineNumbers: normalizeCodeLineNumbers(map.code_line_numbers, false),
-    quickPostEditor: normalizeQuickPostEditor(map.quick_post_editor, 'textarea'),
+    quickPostEditor: normalizeQuickPostEditor(map.quick_post_editor, 'tui'),
     quickPostPromoteSourceMode: normalizeQuickPostPromoteSourceMode(
       map.quick_post_promote_source_mode,
       'ask'
