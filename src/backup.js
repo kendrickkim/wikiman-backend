@@ -30,6 +30,14 @@ function fail(message, status = 400) {
   throw Object.assign(new Error(message), { status })
 }
 
+function sqliteFriendlyMessage(err) {
+  const msg = String(err?.message || err || '').trim()
+  if (/malformed|not a database|disk i\/o error|file is not a database/i.test(msg)) {
+    return '데이터베이스 파일이 손상되어 있습니다. 백업을 다시 만든 뒤 복구해 주세요.'
+  }
+  return msg || '데이터베이스 오류가 발생했습니다.'
+}
+
 function readUInt32LE(buf, offset) {
   return buf.readUInt32LE(offset)
 }
@@ -115,7 +123,7 @@ export function validateDatabaseFile(dbFilePath) {
     }
   } catch (err) {
     if (err.status) throw err
-    fail(`백업 DB를 열 수 없습니다: ${err.message}`)
+    fail(`백업 DB를 열 수 없습니다: ${sqliteFriendlyMessage(err)}`)
   } finally {
     try {
       probe?.close()
@@ -133,10 +141,10 @@ function listUploadFiles() {
     .sort((a, b) => a.localeCompare(b))
 }
 
-async function buildFileList() {
+async function buildFileList(dbAbsPath = dbPath) {
   const files = []
-  const dbStat = await fsp.stat(dbPath)
-  files.push({ path: 'wiki.db', abs: dbPath, size: dbStat.size })
+  const dbStat = await fsp.stat(dbAbsPath)
+  files.push({ path: 'wiki.db', abs: dbAbsPath, size: dbStat.size })
 
   for (const name of listUploadFiles()) {
     const abs = path.join(uploadsDir, name)
@@ -146,87 +154,107 @@ async function buildFileList() {
   return files
 }
 
+async function createConsistentDbSnapshot() {
+  if (!db) fail('데이터베이스가 열려 있지 않아 백업할 수 없습니다.', 500)
+  checkpointDatabase()
+  const snapPath = path.join(dataDir, `.backup-db-${Date.now()}-${process.pid}.db`)
+  try {
+    // WAL 복사 대신 SQLite 백업 API로 일관된 스냅샷을 만듭니다.
+    await db.backup(snapPath)
+    validateDatabaseFile(snapPath)
+    return snapPath
+  } catch (err) {
+    unlinkIfExists(snapPath)
+    if (err.status) throw err
+    fail(`데이터베이스 스냅샷을 만들지 못했습니다: ${sqliteFriendlyMessage(err)}`, 500)
+  }
+}
+
 /** 백업 파일을 outPath에 생성합니다. */
 export async function createBackupFile(outPath) {
-  checkpointDatabase()
-  const files = await buildFileList()
-  const schema = collectSchemaSnapshot()
-  const meta = {
-    app: 'wikiman',
-    formatVersion: BACKUP_FORMAT_VERSION,
-    schemaVersion: BACKUP_SCHEMA_VERSION,
-    createdAt: new Date().toISOString(),
-    fileCount: files.length,
-    totalBytes: files.reduce((sum, file) => sum + file.size, 0),
-    files: files.map((file) => ({ path: file.path, size: file.size })),
-    schema
-  }
-
-  const metaJson = Buffer.from(JSON.stringify(meta), 'utf8')
-  if (metaJson.length > 16 * 1024 * 1024) {
-    fail('백업 메타데이터가 너무 큽니다.', 500)
-  }
-
-  const hash = crypto.createHash('sha256')
-  const gzip = zlib.createGzip({ level: 6 })
-  const fd = fs.openSync(outPath, 'w')
+  const snapPath = await createConsistentDbSnapshot()
   try {
-    fs.writeSync(fd, BACKUP_MAGIC)
-    fs.writeSync(fd, writeUInt32LE(BACKUP_FORMAT_VERSION))
-    fs.writeSync(fd, writeUInt32LE(metaJson.length))
-    fs.writeSync(fd, metaJson)
-  } finally {
-    fs.closeSync(fd)
-  }
-
-  const out = fs.createWriteStream(outPath, { flags: 'a' })
-  const hasher = new Transform({
-    transform(chunk, _enc, cb) {
-      hash.update(chunk)
-      cb(null, chunk)
+    const files = await buildFileList(snapPath)
+    const schema = collectSchemaSnapshot()
+    const meta = {
+      app: 'wikiman',
+      formatVersion: BACKUP_FORMAT_VERSION,
+      schemaVersion: BACKUP_SCHEMA_VERSION,
+      createdAt: new Date().toISOString(),
+      fileCount: files.length,
+      totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+      files: files.map((file) => ({ path: file.path, size: file.size })),
+      schema
     }
-  })
 
-  const payloadSource = Readable.from((async function* () {
-    for (const file of files) {
-      const nameBuf = Buffer.from(file.path, 'utf8')
-      if (nameBuf.length > 65535) fail(`경로가 너무 깁니다: ${file.path}`, 500)
-      yield writeUInt32LE(nameBuf.length)
-      yield nameBuf
-      yield writeUInt64LE(file.size)
-      const handle = await fsp.open(file.abs, 'r')
-      try {
-        let remaining = file.size
-        while (remaining > 0) {
-          const toRead = Math.min(COPY_CHUNK, remaining)
-          const buf = Buffer.alloc(toRead)
-          const { bytesRead } = await handle.read(buf, 0, toRead, null)
-          if (!bytesRead) break
-          remaining -= bytesRead
-          yield buf.subarray(0, bytesRead)
-        }
-        if (remaining !== 0) {
-          fail(`파일 크기가 일치하지 않습니다: ${file.path}`, 500)
-        }
-      } finally {
-        await handle.close()
+    const metaJson = Buffer.from(JSON.stringify(meta), 'utf8')
+    if (metaJson.length > 16 * 1024 * 1024) {
+      fail('백업 메타데이터가 너무 큽니다.', 500)
+    }
+
+    const hash = crypto.createHash('sha256')
+    const gzip = zlib.createGzip({ level: 6 })
+    const fd = fs.openSync(outPath, 'w')
+    try {
+      fs.writeSync(fd, BACKUP_MAGIC)
+      fs.writeSync(fd, writeUInt32LE(BACKUP_FORMAT_VERSION))
+      fs.writeSync(fd, writeUInt32LE(metaJson.length))
+      fs.writeSync(fd, metaJson)
+    } finally {
+      fs.closeSync(fd)
+    }
+
+    const out = fs.createWriteStream(outPath, { flags: 'a' })
+    const hasher = new Transform({
+      transform(chunk, _enc, cb) {
+        hash.update(chunk)
+        cb(null, chunk)
       }
+    })
+
+    const payloadSource = Readable.from((async function* () {
+      for (const file of files) {
+        const nameBuf = Buffer.from(file.path, 'utf8')
+        if (nameBuf.length > 65535) fail(`경로가 너무 깁니다: ${file.path}`, 500)
+        yield writeUInt32LE(nameBuf.length)
+        yield nameBuf
+        yield writeUInt64LE(file.size)
+        const handle = await fsp.open(file.abs, 'r')
+        try {
+          let remaining = file.size
+          while (remaining > 0) {
+            const toRead = Math.min(COPY_CHUNK, remaining)
+            const buf = Buffer.alloc(toRead)
+            const { bytesRead } = await handle.read(buf, 0, toRead, null)
+            if (!bytesRead) break
+            remaining -= bytesRead
+            yield buf.subarray(0, bytesRead)
+          }
+          if (remaining !== 0) {
+            fail(`파일 크기가 일치하지 않습니다: ${file.path}`, 500)
+          }
+        } finally {
+          await handle.close()
+        }
+      }
+    })())
+
+    await pipeline(payloadSource, gzip, hasher, out)
+
+    const digest = hash.digest('hex')
+    const footer = Buffer.concat([
+      Buffer.from('WKCK'),
+      Buffer.from(digest, 'utf8')
+    ])
+    await fsp.appendFile(outPath, footer)
+
+    return {
+      ...meta,
+      payloadSha256: digest,
+      path: outPath
     }
-  })())
-
-  await pipeline(payloadSource, gzip, hasher, out)
-
-  const digest = hash.digest('hex')
-  const footer = Buffer.concat([
-    Buffer.from('WKCK'),
-    Buffer.from(digest, 'utf8')
-  ])
-  await fsp.appendFile(outPath, footer)
-
-  return {
-    ...meta,
-    payloadSha256: digest,
-    path: outPath
+  } finally {
+    unlinkIfExists(snapPath)
   }
 }
 
@@ -513,6 +541,23 @@ export async function restoreBackupFile(filePath) {
       fail(`데이터베이스 파일을 교체할 수 없습니다. 서버가 DB를 사용 중일 수 있습니다: ${err.message}`, 500)
     }
     swapped = true
+
+    // 교체 직후 WAL/SHM이 남아 있으면 새 DB와 섞여 malformed가 납니다.
+    for (const side of ['wiki.db-wal', 'wiki.db-shm']) {
+      unlinkIfExists(path.join(dataDir, side))
+    }
+    try {
+      validateDatabaseFile(dbPath)
+    } catch (err) {
+      if (fs.existsSync(safetyDb)) {
+        await fsp.copyFile(safetyDb, dbPath)
+        for (const side of ['wiki.db-wal', 'wiki.db-shm']) {
+          unlinkIfExists(path.join(dataDir, side))
+        }
+      }
+      if (err.status) throw err
+      fail(`복구한 데이터베이스가 올바르지 않습니다: ${sqliteFriendlyMessage(err)}`)
+    }
 
     try {
       await emptyDir(uploadsDir)

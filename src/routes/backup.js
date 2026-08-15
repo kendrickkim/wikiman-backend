@@ -40,6 +40,14 @@ function cleanup(filePath) {
   }
 }
 
+function restoreErrorMessage(err) {
+  const raw = String(err?.message || '')
+  if (/malformed|not a database|disk i\/o error/i.test(raw)) {
+    return '데이터베이스 파일이 손상되어 있습니다. 백업을 다시 만든 뒤 복구해 주세요.'
+  }
+  return err?.message || '복구에 실패했습니다.'
+}
+
 function stampName() {
   const d = new Date()
   const p = (n) => String(n).padStart(2, '0')
@@ -101,7 +109,15 @@ router.post('/restore', requireWriter, (req, res) => {
       await new Promise((resolve) => setTimeout(resolve, 100))
       try {
         const result = await restoreBackupFile(filePath)
-        reopenDatabase()
+        try {
+          reopenDatabase()
+        } catch (reopenErr) {
+          console.error(reopenErr)
+          throw Object.assign(
+            new Error(`복구 후 데이터베이스를 열 수 없습니다: ${restoreErrorMessage(reopenErr)}`),
+            { status: 500 }
+          )
+        }
         res.json({
           ...result,
           settings: getSettings()
@@ -117,7 +133,7 @@ router.post('/restore', requireWriter, (req, res) => {
         endMaintenance()
       }
     } catch (e) {
-      res.status(e.status || 400).json({ error: e.message || '복구에 실패했습니다.' })
+      res.status(e.status || 400).json({ error: restoreErrorMessage(e) })
     } finally {
       cleanup(filePath)
     }
