@@ -405,6 +405,7 @@ function ensureSchema(database) {
   seedSetting.run('font_scale', '100')
   seedSetting.run('top_menu_visible', '1')
   seedSetting.run('mobile_quick_post_enabled', '0')
+  seedSetting.run('quick_post_editor', 'textarea')
   seedSetting.run('quick_post_promote_source_mode', 'ask')
   seedSetting.run('quick_post_promote_editor', 'ask')
   seedSetting.run('link_preview_cache_ttl_days', '10')

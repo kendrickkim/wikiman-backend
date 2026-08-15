@@ -103,6 +103,10 @@ export function normalizeQuickPostPromoteEditor(value, fallback = 'ask') {
   return fallback === 'ask' || EDITOR_TYPES.includes(fallback) ? fallback : 'ask'
 }
 
+export function normalizeQuickPostEditor(value, fallback = 'textarea') {
+  return normalizeEditorType(value, fallback)
+}
+
 export function normalizeLinkPreviewTtlDays(value, fallback) {
   const n = Math.round(Number(value))
   if (!Number.isFinite(n) || n < MIN_LINK_PREVIEW_TTL_DAYS || n > MAX_LINK_PREVIEW_TTL_DAYS) {
@@ -126,6 +130,7 @@ function rowMap() {
     font_scale: '100',
     top_menu_visible: '1',
     mobile_quick_post_enabled: '0',
+    quick_post_editor: 'textarea',
     quick_post_promote_source_mode: 'ask',
     quick_post_promote_editor: 'ask',
     link_preview_cache_ttl_days: String(DEFAULT_LINK_PREVIEW_CACHE_TTL_DAYS),
@@ -175,6 +180,7 @@ export function getSettings(user) {
     fontScale: normalizeFontScale(map.font_scale, 100),
     topMenuVisible: normalizeTopMenuVisible(map.top_menu_visible, true),
     mobileQuickPostEnabled: normalizeMobileQuickPostEnabled(map.mobile_quick_post_enabled, false),
+    quickPostEditor: normalizeQuickPostEditor(map.quick_post_editor, 'textarea'),
     quickPostPromoteSourceMode: normalizeQuickPostPromoteSourceMode(
       map.quick_post_promote_source_mode,
       'ask'
@@ -300,6 +306,13 @@ export function updateSettings(input = {}, user) {
     next.mobileQuickPostEnabled = enabled
   }
 
+  if (input.quickPostEditor != null) {
+    next.quickPostEditor = normalizeQuickPostEditor(input.quickPostEditor, null)
+    if (!next.quickPostEditor) {
+      throw Object.assign(new Error('간단 포스트 작성 방식을 올바르게 선택하세요.'), { status: 400 })
+    }
+  }
+
   if (input.quickPostPromoteSourceMode != null) {
     const mode = normalizeQuickPostPromoteSourceMode(input.quickPostPromoteSourceMode, null)
     if (!mode) {
@@ -345,6 +358,7 @@ export function updateSettings(input = {}, user) {
     upsert('font_scale', String(next.fontScale))
     upsert('top_menu_visible', next.topMenuVisible ? '1' : '0')
     upsert('mobile_quick_post_enabled', next.mobileQuickPostEnabled ? '1' : '0')
+    upsert('quick_post_editor', next.quickPostEditor)
     upsert('quick_post_promote_source_mode', next.quickPostPromoteSourceMode)
     upsert('quick_post_promote_editor', next.quickPostPromoteEditor)
     upsert('link_preview_cache_ttl_days', String(next.linkPreviewCacheTtlDays))

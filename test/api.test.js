@@ -208,6 +208,7 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     headers: { ...auth, 'content-type': 'application/json' },
     body: JSON.stringify({
       mobileQuickPostEnabled: true,
+      quickPostEditor: 'textarea',
       quickPostPromoteSourceMode: 'ask',
       quickPostPromoteEditor: 'ask',
       linkPreviewCacheTtlDays: 15,
@@ -215,6 +216,7 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     })
   }))
   assert.equal(settingsSaved.mobileQuickPostEnabled, true)
+  assert.equal(settingsSaved.quickPostEditor, 'textarea')
   assert.equal(settingsSaved.quickPostPromoteSourceMode, 'ask')
   assert.equal(settingsSaved.quickPostPromoteEditor, 'ask')
   assert.equal(settingsSaved.linkPreviewCacheTtlDays, 15)
