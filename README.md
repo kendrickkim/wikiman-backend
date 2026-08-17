@@ -2,122 +2,91 @@
 
 # Wikiman Backend
 
-Personal wiki API. Node.js + Express + SQLite.
+The reference API and web host for [Wikiman](https://github.com/kendrickkim/wikiman),
+built with Node.js, Express, and SQLite.
 
-The frontend lives in a separate repository.
+Use this backend when you can run Node.js. For Apache or Nginx with PHP hosting, use
+[wikiman-backend-php](https://github.com/kendrickkim/wikiman-backend-php).
 
-## Requirements
+## Start locally
 
-- Node.js 22.22 or newer
+Requirements:
 
-## Install & run
+- Node.js 22 or newer
 
 ```bash
 npm install
-copy .env.example .env   # Windows
-# cp .env.example .env   # macOS / Linux
+cp .env.example .env       # macOS / Linux
+# copy .env.example .env   # Windows
 npm run dev
 ```
 
-| URL | Role |
-| --- | --- |
-| `http://localhost:85` | API |
-| `http://localhost:80` | Frontend static hosting (`public/`, `/api` proxied to the API) |
+The API starts at `http://localhost:85`. Run
+[wikiman-frontend](https://github.com/kendrickkim/wikiman-frontend) separately
+at `http://localhost:9000` during development.
 
-Production:
+## Host the complete site
 
-```bash
-npm start
-```
-
-## Frontend hosting (PWA)
-
-Build the **PWA** from the frontend repo into `public/`:
+Build the frontend PWA into this repository, then start the production server:
 
 ```bash
-# From the frontend repo (recommended)
+# in wikiman-frontend
 npm run build:backend
 
-# Or manually
-cd ../frontend
-npm run build:pwa
-# Windows example
-xcopy /E /I /Y ..\frontend\dist\pwa public
-```
-
-Then start the backend:
-
-```bash
+# in this repository
 npm start
 ```
 
-You can also point `FRONTEND_DIST` at a build folder.
+The default web address is `http://localhost:80`. It serves the frontend from
+`public/`, routes `/api` to the API, and adds Open Graph metadata to public post
+pages.
 
-## Data
+## Configuration
 
-SQLite and uploads live under `data/`. Copy this folder when moving servers.
+Copy `.env.example` to `.env` and review these values:
 
-- `data/wiki.db` — users, categories, posts
-- `data/uploads/` — uploaded attachments
-
-Do not commit `data/` or `.env`.
-
-## Environment variables
-
-| Variable | Default | Description |
+| Variable | Default | Purpose |
 | --- | --- | --- |
 | `API_PORT` / `PORT` | `85` | API port |
-| `HOST_PORT` | `80` | Frontend host port (`0` disables hosting) |
-| `JWT_SECRET` | (dev default) | JWT signing key. **Change in production** |
-| `PLANTUML_SERVER` | `https://www.plantuml.com/plantuml` | Initial PlantUML server (editable in site admin) |
-| `ALLOW_REGISTER` | `true` | Allow registration until a writer exists |
-| `FRONTEND_DIST` | `public` | Frontend build folder |
-| `PUBLIC_URL` | request origin | Public base URL for canonical/OG image URLs |
+| `HOST_PORT` | `80` | Web host port; `0` disables frontend hosting |
+| `JWT_SECRET` | development value | JWT signing key; replace in production |
+| `FRONTEND_DIST` | `public` | Frontend build directory |
+| `PUBLIC_URL` | request origin | Public URL used for canonical and OG links |
+| `ALLOW_REGISTER` | `true` | Allow signup until the writer account exists |
+| `PLANTUML_SERVER` | public PlantUML server | Initial PlantUML endpoint |
 
-If `JWT_SECRET` is missing or still `change-me` / `dev-secret-change-me` in production, the server refuses to start.
+Production startup fails when `JWT_SECRET` is missing or still uses a known
+development value.
 
-Hosted SPA URLs include Open Graph / Twitter meta. Public posts expose title, description, and the first body image (or the Wikiman icon). Private and draft posts are not exposed. Empty titles fall back to the site title. HTML `lang` and `og:locale` follow the site language setting.
+## Data and backup
 
-## Nginx proxy (Open Graph)
+Runtime data is kept together:
 
-Crawlers such as Kakao or Facebook do not run JavaScript. `og:*` for `/posts/123` is injected by the **host (`HOST_PORT`, default `:80`)**. Proxy that HTML to Node; do not serve a static `index.html` for those routes.
+- `data/wiki.db` — users, categories, posts, and settings
+- `data/uploads/` — uploaded files
 
-### Nginx Proxy Manager
+Back up the entire `data/` directory when moving servers. Never commit `data/`
+or `.env`.
 
-1. **Proxy Hosts → Details**
-   - Forward Hostname / IP: machine running the backend
-   - Forward Port: **`80`** (`HOST_PORT`. Forwarding only `:85` breaks OG)
-   - Cache Assets: preferably off
-2. **(Optional) Custom Locations**
-   - Send `/api` to port `85`; keep `/` and `/posts/...` on Details `:80`
-3. Add this under **Advanced → Custom Nginx Configuration**:
+## Reverse proxy and social previews
+
+Social crawlers do not run JavaScript. Requests for pages such as `/posts/123`
+must reach the Node web host on `HOST_PORT`, where post-specific Open Graph and
+Twitter metadata is added.
+
+With Nginx or Nginx Proxy Manager:
+
+- Forward the main site to `HOST_PORT` (default `80`), not only the API port
+- Preserve `Host`, `X-Forwarded-Host`, and `X-Forwarded-Proto`
+- Do not serve `public/index.html` directly or add a proxy-level SPA fallback
+- Set `PUBLIC_URL=https://your.domain` when the external URL cannot be inferred
+
+Example headers:
 
 ```nginx
-# Do not cache HTML / post URLs (stale OG)
-proxy_cache_bypass $http_upgrade;
-proxy_no_cache 1;
-
-# Absolute URLs for og:url / og:image
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-Host  $host;
 proxy_set_header Host $host;
-```
-
-Do not:
-
-- Handle SPA fallback with `try_files … /index.html` in the proxy
-- Serve `public/` directly with `root` / `alias` in OpenResty
-
-Set `PUBLIC_URL=https://your.domain` in `.env` for stable canonical and image URLs.
-
-Verify:
-
-```bash
-curl -sI https://your.domain/posts/123
-# X-Powered-By: Express → reached the Node host
-
-curl -s https://your.domain/posts/123 | findstr /i "og:title"
-# One post title line (must not duplicate the site default title)
 ```
 
 ## Checks
@@ -128,16 +97,14 @@ npm test
 npm run check
 ```
 
-## Other
+## Additional tools
 
-- DokuWiki import: `npm run import:dokuwiki` (see `document/dokuwiki-import.md`)
-- Docker example: `document/Dockerfile`
+- DokuWiki import: `npm run import:dokuwiki`
+  ([guide](document/dokuwiki-import.md))
 
-## Feature overview
+## Related repositories
 
-- Site language (`siteLanguage`: `ko-KR` | `en-US`) drives HTML `lang` and `og:locale` metadata
-- API failures use stable error codes; the frontend translates them for the selected language
-- Posts are draft/published and public/private
-- Posts, categories, and settings require a writer (first registered account)
-- Blog mode, posts per page, and homepage pinning are managed via the settings API
-- Trash: soft delete → restore / hard delete / empty trash
+- [Wikiman hub](https://github.com/kendrickkim/wikiman)
+- [Frontend](https://github.com/kendrickkim/wikiman-frontend)
+- [PHP backend](https://github.com/kendrickkim/wikiman-backend-php)
+- [Android·iOS app](https://github.com/kendrickkim/wikiman-flutter)
