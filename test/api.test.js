@@ -459,6 +459,51 @@ test('비공개 글 파일은 직접 URL로 열 수 없고, 백업 복구는 스
   assert.equal(Number(version.value), CURRENT_SCHEMA_VERSION)
 })
 
+test('새 첨부 업로드는 월별 폴더에 저장되고 basename URL로 열린다', async (t) => {
+  const { monthFolderName } = await import('../src/uploadPaths.js')
+  const app = createApp()
+  const server = await listen(app)
+  t.after(() => new Promise((resolve) => server.close(resolve)))
+  const port = server.address().port
+  const base = `http://127.0.0.1:${port}`
+
+  const login = await json(await fetch(`${base}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'writer', password: 'secret12' })
+  }))
+
+  const form = new FormData()
+  form.append('files', new Blob(['month-bytes'], { type: 'text/plain' }), 'month-note.txt')
+  const uploaded = await fetch(`${base}/api/uploads/files`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${login.token}` },
+    body: form
+  })
+  assert.equal(uploaded.status, 201)
+  const body = await json(uploaded)
+  const storedName = body.files[0].storedName
+  assert.equal(body.files[0].url, `/api/files/${storedName}`)
+  assert.ok(!fs.existsSync(path.join(dbModule.uploadsDir, storedName)))
+  assert.ok(fs.existsSync(path.join(dbModule.uploadsDir, monthFolderName(), storedName)))
+
+  const served = await fetch(`${base}/api/files/${storedName}`)
+  assert.equal(served.status, 200)
+  assert.equal(await served.text(), 'month-bytes')
+
+  const flatName = 'legacy-flat.txt'
+  fs.writeFileSync(path.join(dbModule.uploadsDir, flatName), 'flat-bytes')
+  const flat = await fetch(`${base}/api/files/${flatName}`)
+  assert.equal(flat.status, 200)
+  assert.equal(await flat.text(), 'flat-bytes')
+
+  const orphans = await json(await fetch(`${base}/api/uploads/orphans`, {
+    headers: { authorization: `Bearer ${login.token}` }
+  }))
+  assert.ok(orphans.files.some((file) => file.name === storedName))
+  assert.ok(orphans.files.some((file) => file.name === flatName))
+})
+
 test.after(() => {
   try {
     dbModule.closeDatabase()

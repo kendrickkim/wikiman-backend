@@ -133,23 +133,14 @@ export function validateDatabaseFile(dbFilePath) {
   }
 }
 
-function listUploadFiles() {
-  if (!fs.existsSync(uploadsDir)) return []
-  return fs.readdirSync(uploadsDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
-    .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b))
-}
-
 async function buildFileList(dbAbsPath = dbPath) {
+  const { walkUploadFiles } = await import('./uploadPaths.js')
   const files = []
   const dbStat = await fsp.stat(dbAbsPath)
   files.push({ path: 'wiki.db', abs: dbAbsPath, size: dbStat.size })
 
-  for (const name of listUploadFiles()) {
-    const abs = path.join(uploadsDir, name)
-    const stat = await fsp.stat(abs)
-    files.push({ path: `uploads/${name}`, abs, size: stat.size })
+  for (const file of walkUploadFiles()) {
+    files.push({ path: `uploads/${file.name}`, abs: file.abs, size: file.size })
   }
   return files
 }
@@ -443,8 +434,16 @@ async function copyDirFiles(src, dest) {
   await fsp.mkdir(dest, { recursive: true })
   if (!fs.existsSync(src)) return
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue
+    const from = path.join(src, entry.name)
+    const to = path.join(dest, entry.name)
+    if (entry.isDirectory()) {
+      if (!/^\d{4}-\d{2}$/.test(entry.name)) continue
+      await copyDirFiles(from, to)
+      continue
+    }
     if (!entry.isFile()) continue
-    await fsp.copyFile(path.join(src, entry.name), path.join(dest, entry.name))
+    await fsp.copyFile(from, to)
   }
 }
 

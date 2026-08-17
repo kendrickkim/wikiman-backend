@@ -1,8 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { db, uploadsDir } from './db.js'
+import { db } from './db.js'
 import { isWriter } from './middleware/auth.js'
 import { canReadPost } from './access.js'
+import { resolveUploadPath } from './uploadPaths.js'
+
+export { resolveUploadPath } from './uploadPaths.js'
 
 const MIME = {
   '.png': 'image/png',
@@ -29,15 +32,6 @@ function faviconStoredName() {
   const value = String(row?.value || '')
   const match = value.match(/^\/api\/files\/([^/?#]+)$/)
   return match ? path.basename(match[1]) : ''
-}
-
-export function resolveUploadPath(storedName) {
-  const name = path.basename(String(storedName || ''))
-  if (!name || name.includes('..')) return ''
-  const filePath = path.join(uploadsDir, name)
-  if (!filePath.startsWith(uploadsDir)) return ''
-  if (!fs.existsSync(filePath)) return ''
-  return filePath
 }
 
 export function canAccessStoredFile(storedName, user, { postId = null } = {}) {

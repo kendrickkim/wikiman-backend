@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { uploadsDir } from './db.js'
 import { extractStoredNamesFromContent, fileUrlForPost } from './fileUrls.js'
+import { resolveUploadPath, walkUploadFiles } from './uploadPaths.js'
 
 export const MAX_FILES_PER_REQUEST = 20
 export const MAX_ATTACHMENTS = 50
@@ -42,7 +42,8 @@ export function normalizeAttachments(input) {
     const storedName = path.basename(String(item?.storedName || item?.stored_name || ''))
     if (!storedName || storedName.includes('..')) continue
     if (seen.has(storedName)) continue
-    if (!fs.existsSync(path.join(uploadsDir, storedName))) continue
+    const filePath = resolveUploadPath(storedName)
+    if (!filePath) continue
     seen.add(storedName)
     const originalName = String(item?.originalName || item?.original_name || storedName).trim().slice(0, 200) || storedName
     const mimeType = String(item?.mimeType || item?.mime_type || 'application/octet-stream').slice(0, 120)
@@ -100,18 +101,9 @@ export function syncUploadRefs(db, postId) {
 export function listOrphanUploads(db) {
   const used = usedStoredNames(db)
   const orphans = []
-  for (const entry of fs.readdirSync(uploadsDir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue
-    const name = entry.name
-    if (!name || name.startsWith('.')) continue
-    if (used.has(name)) continue
-    let size = 0
-    try {
-      size = fs.statSync(path.join(uploadsDir, name)).size
-    } catch {
-      continue
-    }
-    orphans.push({ name, size })
+  for (const file of walkUploadFiles()) {
+    if (used.has(file.name)) continue
+    orphans.push({ name: file.name, size: file.size })
   }
   orphans.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
   return orphans
@@ -141,8 +133,10 @@ export function deleteOrphanUploads(db) {
 }
 
 function unlinkStoredName(storedName) {
+  const filePath = resolveUploadPath(storedName)
+  if (!filePath) return
   try {
-    fs.unlinkSync(path.join(uploadsDir, storedName))
+    fs.unlinkSync(filePath)
   } catch {
     // ignore missing files
   }

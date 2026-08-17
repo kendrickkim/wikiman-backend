@@ -6,6 +6,7 @@ import { db, uploadsDir } from '../db.js'
 import { requireWriter } from '../middleware/auth.js'
 import { getMaxAttachmentBytes, getMaxAttachmentMb } from '../settings.js'
 import { apiError, errorPayload, sendError } from '../errors.js'
+import { ensureMonthUploadDir } from '../uploadPaths.js'
 
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
 const imageExt = {
@@ -27,7 +28,18 @@ function storedName(file) {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}${ext}`
 }
 
-const storage = multer.diskStorage({
+const monthStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    try {
+      cb(null, ensureMonthUploadDir())
+    } catch (err) {
+      cb(err)
+    }
+  },
+  filename: (_req, file, cb) => cb(null, storedName(file))
+})
+
+const flatStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
   filename: (_req, file, cb) => cb(null, storedName(file))
 })
@@ -62,7 +74,7 @@ function isFaviconFile(file) {
 }
 
 const faviconUpload = multer({
-  storage,
+  storage: flatStorage,
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!isFaviconFile(file)) {
@@ -75,7 +87,7 @@ const faviconUpload = multer({
 
 function createImageUpload() {
   return multer({
-    storage,
+    storage: monthStorage,
     limits: { fileSize: getMaxAttachmentBytes() },
     fileFilter: (_req, file, cb) => {
       if (!imageTypes.has(file.mimetype)) {
@@ -89,7 +101,7 @@ function createImageUpload() {
 
 function createFileUpload() {
   return multer({
-    storage,
+    storage: monthStorage,
     limits: { fileSize: getMaxAttachmentBytes(), files: MAX_FILES_PER_REQUEST }
   })
 }
