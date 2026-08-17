@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { extractStoredNamesFromContent, fileUrlForPost } from './fileUrls.js'
 import { resolveUploadPath, walkUploadFiles } from './uploadPaths.js'
+import { cleanupOrphanThumbnails, removeCachedThumbnail } from './thumbnails.js'
 
 export const MAX_FILES_PER_REQUEST = 20
 export const MAX_ATTACHMENTS = 50
@@ -125,6 +126,7 @@ export function deleteOrphanUploads(db) {
     unlinkStoredName(file.name)
     deletedBytes += file.size
   }
+  cleanupOrphanThumbnails()
   return {
     deletedCount: files.length,
     deletedBytes,
@@ -134,12 +136,14 @@ export function deleteOrphanUploads(db) {
 
 function unlinkStoredName(storedName) {
   const filePath = resolveUploadPath(storedName)
-  if (!filePath) return
-  try {
-    fs.unlinkSync(filePath)
-  } catch {
-    // ignore missing files
+  if (filePath) {
+    try {
+      fs.unlinkSync(filePath)
+    } catch {
+      // ignore missing files
+    }
   }
+  removeCachedThumbnail(storedName)
 }
 
 export function unlinkStoredNames(names) {

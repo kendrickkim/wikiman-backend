@@ -24,6 +24,7 @@ import { canReadPost, visibilityFilter } from '../access.js'
 import { rewriteContentFileUrls } from '../fileUrls.js'
 import { sanitizePostContent } from '../sanitize.js'
 import { canAccessStoredFile, resolveUploadPath, sendUploadFile } from '../files.js'
+import { sendThumbnailOrOriginal } from '../thumbnails.js'
 import { sendError } from '../errors.js'
 
 const router = Router()
@@ -410,7 +411,7 @@ router.delete('/:id/permanent', requireWriter, (req, res) => {
   res.json({ ok: true })
 })
 
-router.get('/:id/files/:name', (req, res) => {
+router.get('/:id/files/:name', async (req, res) => {
   const storedName = path.basename(req.params.name)
   if (!canAccessStoredFile(storedName, req.user, { postId: Number(req.params.id) })) {
     return res.status(404).json({ error: 'FILE_NOT_FOUND' })
@@ -418,6 +419,10 @@ router.get('/:id/files/:name', (req, res) => {
   const filePath = resolveUploadPath(storedName)
   if (!filePath) {
     return res.status(404).json({ error: 'FILE_NOT_FOUND' })
+  }
+  if (req.query.thumb === '1') {
+    await sendThumbnailOrOriginal(req, res, filePath, storedName)
+    return
   }
   sendUploadFile(res, filePath)
 })

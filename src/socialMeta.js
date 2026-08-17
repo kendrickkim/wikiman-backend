@@ -14,6 +14,22 @@ function absoluteUrl(origin, value) {
   }
 }
 
+function socialImageUrl(origin, value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw, origin)
+    const isRelative = raw.startsWith('/') && !raw.startsWith('//')
+    const isSameOrigin = url.origin === new URL(origin).origin
+    const isInternalUpload = /^\/api\/files\/[^/]+$/.test(url.pathname)
+      || /^\/api\/posts\/\d+\/files\/[^/]+$/.test(url.pathname)
+    if ((isRelative || isSameOrigin) && isInternalUpload) url.searchParams.set('thumb', '1')
+    return url.toString()
+  } catch {
+    return ''
+  }
+}
+
 function decodeBasicEntities(value) {
   return String(value || '')
     .replace(/&nbsp;/gi, ' ')
@@ -79,7 +95,7 @@ export function firstPostImage(post, origin) {
     image = markdownImage(post.content)
   }
   if (!image && post?.id) image = firstAttachmentImage(post.id)
-  return absoluteUrl(origin, image || DEFAULT_ICON)
+  return socialImageUrl(origin, image || DEFAULT_ICON)
 }
 
 function siteMeta(origin, canonicalUrl) {

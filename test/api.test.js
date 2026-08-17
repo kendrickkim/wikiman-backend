@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import bcrypt from 'bcryptjs'
+import sharp from 'sharp'
 
 const dataDir = mkdtempSync(path.join(os.tmpdir(), 'wikiman-api-'))
 process.env.WIKIMAN_DATA_DIR = dataDir
@@ -77,6 +78,13 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   )
   assert.match(socialHtml, /property="og:title" content="공유 글"/)
   assert.match(socialHtml, /property="og:image" content="https:\/\/cdn\.example\.com\/cover\.jpg"/)
+
+  const internalSocialId = Number(db.prepare(`
+    INSERT INTO posts (title, slug, author_id, visibility, status, editor_type, content)
+    VALUES ('내부 이미지', 'internal-social', ?, 'public', 'published', 'markdown', ?)
+  `).run(userId, '![대표 그림](/api/files/internal-cover.png)').lastInsertRowid)
+  const internalSocial = socialMetaForPath(`/posts/${internalSocialId}`, 'https://wiki.example')
+  assert.equal(internalSocial.image, 'https://wiki.example/api/files/internal-cover.png?thumb=1')
 
   const minifiedHtml = injectSocialMeta(
     '<!DOCTYPE html><html><head><meta charset=utf-8><meta name=description content="개인 위키">'
@@ -262,6 +270,7 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.equal(settingsDefaults.codeLineNumbers, false)
   assert.equal(settingsDefaults.rightMenuDefaultOpen, true)
   assert.equal(settingsDefaults.siteLanguage, 'ko-KR')
+  assert.equal(settingsDefaults.thumbnailCacheDays, 100)
 
   const settingsSaved = await json(await fetch(`${base}/api/settings`, {
     method: 'PATCH',
@@ -278,6 +287,7 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
       quickPostPromoteEditor: 'ask',
       linkPreviewCacheTtlDays: 15,
       linkPreviewFailureTtlDays: 2,
+      thumbnailCacheDays: 42,
       siteLanguage: 'en-US'
     })
   }))
@@ -292,6 +302,7 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   assert.equal(settingsSaved.quickPostPromoteEditor, 'ask')
   assert.equal(settingsSaved.linkPreviewCacheTtlDays, 15)
   assert.equal(settingsSaved.linkPreviewFailureTtlDays, 2)
+  assert.equal(settingsSaved.thumbnailCacheDays, 42)
   assert.equal(settingsSaved.siteLanguage, 'en-US')
   const englishMeta = socialMetaForPath('/', 'https://wiki.example')
   assert.equal(englishMeta.lang, 'en-US')
@@ -305,6 +316,14 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
   })
   assert.equal(badSiteLanguage.status, 400)
   assert.equal((await json(badSiteLanguage)).error, 'SITE_LANGUAGE_INVALID')
+
+  const badThumbnailDays = await fetch(`${base}/api/settings`, {
+    method: 'PATCH',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ thumbnailCacheDays: 0 })
+  })
+  assert.equal(badThumbnailDays.status, 400)
+  assert.equal((await json(badThumbnailDays)).error, 'THUMBNAIL_CACHE_DAYS_INVALID')
 
   const customBlogPageSize = await json(await fetch(`${base}/api/settings`, {
     method: 'PATCH',
@@ -502,6 +521,67 @@ test('새 첨부 업로드는 월별 폴더에 저장되고 basename URL로 열�
   }))
   assert.ok(orphans.files.some((file) => file.name === storedName))
   assert.ok(orphans.files.some((file) => file.name === flatName))
+})
+
+test('평면·월별 이미지 썸네일을 생성하고 캐시 헤더를 제공한다', async (t) => {
+  const { monthFolderName } = await import('../src/uploadPaths.js')
+  const { thumbnailPath } = await import('../src/thumbnails.js')
+  const user = db.prepare("SELECT id FROM users WHERE username = 'writer'").get()
+  const flatName = 'thumbnail-flat.png'
+  const monthlyName = 'thumbnail-monthly.jpg'
+  const flatPath = path.join(dbModule.uploadsDir, flatName)
+  const monthDir = path.join(dbModule.uploadsDir, monthFolderName())
+  fs.mkdirSync(monthDir, { recursive: true })
+  await sharp({ create: { width: 800, height: 600, channels: 3, background: '#336699' } }).png().toFile(flatPath)
+  await sharp({ create: { width: 300, height: 600, channels: 3, background: '#993366' } })
+    .jpeg()
+    .toFile(path.join(monthDir, monthlyName))
+
+  const postId = Number(db.prepare(`
+    INSERT INTO posts (title, slug, author_id, visibility, status, editor_type, content)
+    VALUES ('썸네일', 'thumbnail-post', ?, 'public', 'published', 'markdown', ?)
+  `).run(user.id, `![](/api/posts/x/files/${flatName})`).lastInsertRowid)
+  db.prepare('INSERT INTO upload_refs (post_id, stored_name) VALUES (?, ?)').run(postId, flatName)
+
+  const app = createApp()
+  const server = await listen(app)
+  t.after(() => new Promise((resolve) => server.close(resolve)))
+  const base = `http://127.0.0.1:${server.address().port}`
+
+  const flat = await fetch(`${base}/api/posts/${postId}/files/${flatName}?thumb=1`)
+  assert.equal(flat.status, 200)
+  assert.equal(flat.headers.get('content-type'), 'image/webp')
+  assert.equal(flat.headers.get('cache-control'), 'public, max-age=3628800')
+  assert.ok(flat.headers.get('etag'))
+  assert.ok(flat.headers.get('last-modified'))
+  const flatMetadata = await sharp(Buffer.from(await flat.arrayBuffer())).metadata()
+  assert.equal(flatMetadata.width, 400)
+  assert.equal(flatMetadata.height, 300)
+
+  const monthly = await fetch(`${base}/api/files/${monthlyName}?thumb=1`)
+  assert.equal(monthly.status, 200)
+  const monthlyMetadata = await sharp(Buffer.from(await monthly.arrayBuffer())).metadata()
+  assert.equal(monthlyMetadata.width, 300)
+  assert.equal(monthlyMetadata.height, 600)
+
+  const cachedPath = thumbnailPath(flatName)
+  assert.ok(fs.existsSync(cachedPath))
+  const conditional = await fetch(`${base}/api/posts/${postId}/files/${flatName}?thumb=1`, {
+    headers: { 'if-none-match': flat.headers.get('etag') }
+  })
+  assert.equal(conditional.status, 304)
+
+  const oldMtime = new Date(Date.now() - 50 * 24 * 60 * 60 * 1000)
+  fs.utimesSync(cachedPath, oldMtime, oldMtime)
+  const refreshed = await fetch(`${base}/api/posts/${postId}/files/${flatName}?thumb=1`)
+  assert.equal(refreshed.status, 200)
+  assert.ok(fs.statSync(cachedPath).mtimeMs > oldMtime.getTime())
+
+  const unsupported = 'thumbnail-fallback.txt'
+  fs.writeFileSync(path.join(dbModule.uploadsDir, unsupported), 'original')
+  const fallback = await fetch(`${base}/api/files/${unsupported}?thumb=1`)
+  assert.equal(fallback.status, 200)
+  assert.equal(await fallback.text(), 'original')
 })
 
 test.after(() => {

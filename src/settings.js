@@ -15,6 +15,9 @@ export const DEFAULT_LINK_PREVIEW_CACHE_TTL_DAYS = 10
 export const DEFAULT_LINK_PREVIEW_FAILURE_TTL_DAYS = 1
 const MIN_LINK_PREVIEW_TTL_DAYS = 1
 const MAX_LINK_PREVIEW_TTL_DAYS = 365
+export const DEFAULT_THUMBNAIL_CACHE_DAYS = 100
+const MIN_THUMBNAIL_CACHE_DAYS = 1
+const MAX_THUMBNAIL_CACHE_DAYS = 365
 
 export function normalizeSiteLanguage(value, fallback = DEFAULT_SITE_LANGUAGE) {
   const raw = String(value ?? '').trim()
@@ -156,6 +159,15 @@ export function normalizeLinkPreviewTtlDays(value, fallback) {
   return n
 }
 
+export function normalizeThumbnailCacheDays(value, fallback = DEFAULT_THUMBNAIL_CACHE_DAYS) {
+  const n = Math.round(Number(value))
+  if (!Number.isFinite(n) || n < MIN_THUMBNAIL_CACHE_DAYS || n > MAX_THUMBNAIL_CACHE_DAYS) {
+    if (fallback === null) return null
+    return fallback
+  }
+  return n
+}
+
 function rowMap() {
   const map = {
     site_title: 'Wikiman',
@@ -179,6 +191,7 @@ function rowMap() {
     quick_post_editor: 'tui',
     quick_post_promote_source_mode: 'ask',
     quick_post_promote_editor: 'ask',
+    thumbnail_cache_days: String(DEFAULT_THUMBNAIL_CACHE_DAYS),
     link_preview_cache_ttl_days: String(DEFAULT_LINK_PREVIEW_CACHE_TTL_DAYS),
     link_preview_failure_ttl_days: String(DEFAULT_LINK_PREVIEW_FAILURE_TTL_DAYS)
   }
@@ -194,6 +207,10 @@ export function getMaxAttachmentMb() {
 
 export function getMaxAttachmentBytes() {
   return getMaxAttachmentMb() * 1024 * 1024
+}
+
+export function getThumbnailCacheDays() {
+  return normalizeThumbnailCacheDays(rowMap().thumbnail_cache_days, DEFAULT_THUMBNAIL_CACHE_DAYS)
 }
 
 export function getLinkPreviewCacheConfig() {
@@ -240,6 +257,10 @@ export function getSettings(user) {
     quickPostPromoteEditor: normalizeQuickPostPromoteEditor(
       map.quick_post_promote_editor,
       'ask'
+    ),
+    thumbnailCacheDays: normalizeThumbnailCacheDays(
+      map.thumbnail_cache_days,
+      DEFAULT_THUMBNAIL_CACHE_DAYS
     ),
     linkPreviewCacheTtlDays: normalizeLinkPreviewTtlDays(
       map.link_preview_cache_ttl_days,
@@ -426,6 +447,14 @@ export function updateSettings(input = {}, user) {
     next.quickPostPromoteEditor = editor
   }
 
+  if (input.thumbnailCacheDays != null) {
+    const days = normalizeThumbnailCacheDays(input.thumbnailCacheDays, null)
+    if (days == null) {
+      throw apiError('THUMBNAIL_CACHE_DAYS_INVALID', 400)
+    }
+    next.thumbnailCacheDays = days
+  }
+
   if (input.linkPreviewCacheTtlDays != null) {
     const days = normalizeLinkPreviewTtlDays(input.linkPreviewCacheTtlDays, null)
     if (days == null) {
@@ -464,6 +493,7 @@ export function updateSettings(input = {}, user) {
     upsert('quick_post_editor', next.quickPostEditor)
     upsert('quick_post_promote_source_mode', next.quickPostPromoteSourceMode)
     upsert('quick_post_promote_editor', next.quickPostPromoteEditor)
+    upsert('thumbnail_cache_days', String(next.thumbnailCacheDays))
     upsert('link_preview_cache_ttl_days', String(next.linkPreviewCacheTtlDays))
     upsert('link_preview_failure_ttl_days', String(next.linkPreviewFailureTtlDays))
   })

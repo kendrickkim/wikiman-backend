@@ -414,6 +414,7 @@ function ensureSchema(database) {
   seedSetting.run('quick_post_editor', 'tui')
   seedSetting.run('quick_post_promote_source_mode', 'ask')
   seedSetting.run('quick_post_promote_editor', 'ask')
+  seedSetting.run('thumbnail_cache_days', '100')
   seedSetting.run('link_preview_cache_ttl_days', '10')
   seedSetting.run('link_preview_failure_ttl_days', '1')
 
