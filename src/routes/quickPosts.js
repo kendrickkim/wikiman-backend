@@ -5,6 +5,7 @@ import { sanitizePostContent } from '../sanitize.js'
 import { rewriteContentFileUrls } from '../fileUrls.js'
 import { syncUploadRefs } from '../attachments.js'
 import { normalizeEditorType } from '../editors.js'
+import { convertEditorContent } from '../editorConvert.js'
 import { getSettings } from '../settings.js'
 import { apiError, sendError } from '../errors.js'
 
@@ -43,36 +44,8 @@ function slugify(title) {
   return `${base}-${Date.now().toString(36)}`
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function contentForEditor(content, editorType) {
-  if (editorType === 'editorjs') {
-    const blocks = String(content)
-      .split(/\n{2,}/)
-      .map((text) => text.trim())
-      .filter(Boolean)
-      .map((text) => ({
-        type: 'paragraph',
-        data: { text: escapeHtml(text).replace(/\n/g, '<br>') }
-      }))
-    return JSON.stringify({ blocks })
-  }
-  if (editorType === 'ckeditor' || editorType === 'summernote' || editorType === 'html') {
-    return String(content)
-      .split(/\n{2,}/)
-      .map((text) => text.trim())
-      .filter(Boolean)
-      .map((text) => `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`)
-      .join('')
-  }
-  return content
+function contentForEditor(content, editorType, sourceEditorType) {
+  return convertEditorContent(content, sourceEditorType, editorType)
 }
 
 router.get('/', requireWriter, (req, res) => {
@@ -155,7 +128,10 @@ router.post('/:id/promote', requireWriter, (req, res) => {
 
   try {
     const postId = db.transaction(() => {
-      const sanitized = sanitizePostContent(editorType, contentForEditor(content, editorType))
+      const sanitized = sanitizePostContent(
+        editorType,
+        contentForEditor(content, editorType, settings.quickPostEditor)
+      )
       const slug = slugify('')
       const inserted = db.prepare(`
         INSERT INTO posts (title, slug, category_id, author_id, visibility, status, editor_type, content)

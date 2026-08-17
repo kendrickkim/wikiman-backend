@@ -400,6 +400,41 @@ test('검색은 content LIKE 없이 FTS·제목·키워드를 쓰고, 키워드 
     headers: auth
   })
 
+  await json(await fetch(`${base}/api/settings`, {
+    method: 'PATCH',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ quickPostEditor: 'tui' })
+  }))
+  const imageName = 'promote-image.png'
+  fs.writeFileSync(path.join(dbModule.uploadsDir, imageName), 'png-bytes')
+  const imageQuick = await json(await fetch(`${base}/api/quick-posts`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ content: `그림 메모\n\n![그림](/api/files/${imageName})` })
+  }))
+  const htmlPromoted = await json(await fetch(`${base}/api/quick-posts/${imageQuick.quickPost.id}/promote`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ editorType: 'ckeditor', keepSource: true })
+  }))
+  assert.equal(htmlPromoted.post.editorType, 'ckeditor')
+  assert.match(htmlPromoted.post.content, /<img[^>]+src="\/api\/posts\/\d+\/files\/promote-image\.png"/)
+  assert.doesNotMatch(htmlPromoted.post.content, /!\[그림\]/)
+  const htmlRefs = db.prepare('SELECT stored_name FROM upload_refs WHERE post_id = ?').all(htmlPromoted.post.id)
+  assert.ok(htmlRefs.some((row) => row.stored_name === imageName))
+
+  const editorjsPromoted = await json(await fetch(`${base}/api/quick-posts/${imageQuick.quickPost.id}/promote`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ editorType: 'editorjs', keepSource: false })
+  }))
+  const editorjsBlocks = JSON.parse(editorjsPromoted.post.content).blocks
+  const imageBlock = editorjsBlocks.find((block) => block.type === 'image')
+  assert.ok(imageBlock)
+  assert.match(imageBlock.data.file.url, /\/api\/posts\/\d+\/files\/promote-image\.png/)
+  const editorjsRefs = db.prepare('SELECT stored_name FROM upload_refs WHERE post_id = ?').all(editorjsPromoted.post.id)
+  assert.ok(editorjsRefs.some((row) => row.stored_name === imageName))
+
   const anotherQuick = await json(await fetch(`${base}/api/quick-posts`, {
     method: 'POST',
     headers: { ...auth, 'content-type': 'application/json' },
